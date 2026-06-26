@@ -1,5 +1,6 @@
 import React, { useMemo } from "react";
 import { Play, Pause, FastForward, Clock, RotateCcw, ChevronUp, ChevronDown } from "lucide-react";
+import { soundService } from "../utils/soundService";
 
 const TIME_PRESETS = [
   { label: "NOW", value: 0 },
@@ -88,7 +89,7 @@ export default function BottomPanel({
 
         {/* Play/Pause */}
         <button
-          onClick={() => setIsPlaying(!isPlaying)}
+          onClick={() => { setIsPlaying(!isPlaying); soundService.playClick(); }}
           style={{
             width: 26, height: 26, borderRadius: 4,
             background: "rgba(14,165,233,0.12)", border: "1px solid rgba(14,165,233,0.5)",
@@ -96,7 +97,7 @@ export default function BottomPanel({
             cursor: "pointer", color: "#0ea5e9", flexShrink: 0,
             transition: "all 0.15s ease"
           }}
-          onMouseEnter={e => { e.currentTarget.style.background = "rgba(14,165,233,0.25)"; }}
+          onMouseEnter={e => { e.currentTarget.style.background = "rgba(14,165,233,0.25)"; soundService.playHover(); }}
           onMouseLeave={e => { e.currentTarget.style.background = "rgba(14,165,233,0.12)"; }}
         >
           {isPlaying
@@ -106,7 +107,7 @@ export default function BottomPanel({
 
         {/* Forward */}
         <button
-          onClick={() => setTimeOffset(prev => prev + 3600)}
+          onClick={() => { setTimeOffset(prev => prev + 3600); soundService.playClick(); }}
           style={{
             width: 26, height: 26, borderRadius: 4,
             background: "rgba(14,165,233,0.06)", border: "1px solid rgba(30,41,67,0.8)",
@@ -114,7 +115,7 @@ export default function BottomPanel({
             cursor: "pointer", color: "#64748b", flexShrink: 0,
             transition: "all 0.15s ease"
           }}
-          onMouseEnter={e => { e.currentTarget.style.background = "rgba(14,165,233,0.12)"; e.currentTarget.style.color = "#0ea5e9"; }}
+          onMouseEnter={e => { e.currentTarget.style.background = "rgba(14,165,233,0.12)"; e.currentTarget.style.color = "#0ea5e9"; soundService.playHover(); }}
           onMouseLeave={e => { e.currentTarget.style.background = "rgba(14,165,233,0.06)"; e.currentTarget.style.color = "#64748b"; }}
           title="Forward 1 Hour"
         >
@@ -123,7 +124,7 @@ export default function BottomPanel({
 
         {/* Reset */}
         <button
-          onClick={() => setTimeOffset(0)}
+          onClick={() => { setTimeOffset(0); soundService.playClick(); }}
           style={{
             width: 26, height: 26, borderRadius: 4,
             background: "rgba(14,165,233,0.06)", border: "1px solid rgba(30,41,67,0.8)",
@@ -131,7 +132,7 @@ export default function BottomPanel({
             cursor: "pointer", color: "#64748b", flexShrink: 0,
             transition: "all 0.15s ease"
           }}
-          onMouseEnter={e => { e.currentTarget.style.background = "rgba(14,165,233,0.12)"; e.currentTarget.style.color = "#0ea5e9"; }}
+          onMouseEnter={e => { e.currentTarget.style.background = "rgba(14,165,233,0.12)"; e.currentTarget.style.color = "#0ea5e9"; soundService.playHover(); }}
           onMouseLeave={e => { e.currentTarget.style.background = "rgba(14,165,233,0.06)"; e.currentTarget.style.color = "#64748b"; }}
           title="Reset to Now"
         >
@@ -141,7 +142,8 @@ export default function BottomPanel({
         {/* Speed */}
         <select
           value={speed}
-          onChange={e => setSpeed(Number(e.target.value))}
+          onChange={e => { setSpeed(Number(e.target.value)); soundService.playClick(); }}
+          onMouseEnter={() => soundService.playHover()}
           style={{ flexShrink: 0 }}
         >
           <option value={1}>1x</option>
@@ -157,7 +159,7 @@ export default function BottomPanel({
         {/* Slider — hidden on mobile */}
         {!isMobile && (
           <div className="bottom-slider-wrap" style={{ flex:1, display:"flex", alignItems:"center", padding:"0 4px" }}>
-            <input type="range" min="0" max="100" value={sliderVal} onChange={e=>setTimeOffset(getSecondsFromSlider(Number(e.target.value)))} style={{ width:"100%" }}/>
+            <input type="range" min="0" max="100" value={sliderVal} onChange={e=>{setTimeOffset(getSecondsFromSlider(Number(e.target.value))); soundService.playClick();}} style={{ width:"100%" }}/>
           </div>
         )}
 
@@ -167,9 +169,9 @@ export default function BottomPanel({
             {TIME_PRESETS.map(preset => {
               const active = Math.abs(timeOffset - preset.value) < 10;
               return (
-                <button key={preset.label} onClick={() => setTimeOffset(preset.value)}
+                <button key={preset.label} onClick={() => { setTimeOffset(preset.value); soundService.playClick(); }}
                   style={{ fontSize:"8px", fontWeight:700, padding:"3px 6px", borderRadius:3, cursor:"pointer", letterSpacing:"0.05em", fontFamily:"'Share Tech Mono',monospace", transition:"all 0.15s ease", border:`1px solid ${active?"rgba(14,165,233,0.7)":"rgba(30,41,67,0.8)"}`, background:active?"rgba(14,165,233,0.2)":"rgba(4,8,26,0.6)", color:active?"#fff":"#64748b", boxShadow:active?"0 0 8px rgba(14,165,233,0.3)":"none" }}
-                  onMouseEnter={e=>{if(!active){e.currentTarget.style.color="#94a3b8";e.currentTarget.style.borderColor="rgba(14,165,233,0.3)";}}} 
+                  onMouseEnter={e=>{soundService.playHover(); if(!active){e.currentTarget.style.color="#94a3b8";e.currentTarget.style.borderColor="rgba(14,165,233,0.3)";}}} 
                   onMouseLeave={e=>{if(!active){e.currentTarget.style.color="#64748b";e.currentTarget.style.borderColor="rgba(30,41,67,0.8)";}}}
                 >
                   {preset.label}

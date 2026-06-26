@@ -4,6 +4,7 @@ import {
   Flame, Globe, Compass, Satellite, Navigation,
   AlertCircle, Radio
 } from "lucide-react";
+import { soundService } from "../utils/soundService";
 
 /* ── helpers ─────────────────────────────────────────────── */
 const getSatMeta = (name) => {
@@ -431,6 +432,99 @@ function GroundTrackMap({ sat }) {
   );
 }
 
+function SignalAnalyzer({ sat, linkData }) {
+  const [points, setPoints] = useState(() => Array.from({ length: 40 }, () => 40));
+  const phaseRef = useRef(0);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      phaseRef.current += 0.15;
+      const snr = linkData ? parseFloat(linkData.snr) : 0;
+      const baseAmp = linkData ? Math.min(25, Math.max(2, snr * 0.8)) : 1;
+      const noise = Math.random() * 3 - 1.5;
+      
+      setPoints(prev => {
+        const next = [...prev.slice(1)];
+        const p1 = Math.sin(phaseRef.current) * baseAmp;
+        const p2 = Math.cos(phaseRef.current * 2.3) * (baseAmp * 0.3);
+        const val = 40 + p1 + p2 + noise;
+        next.push(val);
+        return next;
+      });
+    }, 40);
+    return () => clearInterval(interval);
+  }, [linkData]);
+
+  const pathD = useMemo(() => {
+    return points.reduce((acc, y, x) => {
+      const px = (x / (points.length - 1)) * 320;
+      return acc + (x === 0 ? `M ${px} ${y}` : ` L ${px} ${y}`);
+    }, "");
+  }, [points]);
+
+  const snrVal = linkData ? parseFloat(linkData.snr) : 0;
+
+  return (
+    <div style={{
+      background: "rgba(2,4,12,0.92)",
+      border: "1px solid rgba(14,165,233,0.18)",
+      borderRadius: 4,
+      padding: 8,
+      position: "relative"
+    }}>
+      <div style={{ position: "relative", width: "100%", height: 80, overflow: "hidden" }}>
+        <svg style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}>
+          {Array.from({ length: 10 }).map((_, i) => (
+            <line key={`v-${i}`} x1={`${(i / 10) * 100}%`} y1="0" x2={`${(i / 10) * 100}%`} y2="100%" stroke="rgba(14,165,233,0.06)" strokeWidth="0.5" />
+          ))}
+          {Array.from({ length: 4 }).map((_, i) => (
+            <line key={`h-${i}`} x1="0" y1={`${(i / 4) * 100}%`} x2="100%" y2={`${(i / 4) * 100}%`} stroke="rgba(14,165,233,0.06)" strokeWidth="0.5" />
+          ))}
+          <path
+            d={pathD}
+            fill="none"
+            stroke={linkData ? "#00f0ff" : "#ef4444"}
+            strokeWidth="1.5"
+            style={{
+              filter: linkData ? "drop-shadow(0 0 4px rgba(0,240,255,0.8))" : "drop-shadow(0 0 4px rgba(239,68,68,0.8))",
+              transition: "stroke 0.3s ease"
+            }}
+          />
+        </svg>
+        <div style={{ position: "absolute", top: 4, left: 6, fontSize: 7, color: "rgba(14,165,233,0.5)", fontFamily: "'Share Tech Mono', monospace" }}>
+          DOWNLINK FREQ: 8.420 GHz
+        </div>
+        <div style={{ position: "absolute", top: 4, right: 6, fontSize: 7, color: linkData ? "#00f0ff" : "#ef4444", fontFamily: "'Share Tech Mono', monospace" }}>
+          {linkData ? "LINK STABLE" : "SIGNAL ATTENUATED"}
+        </div>
+        <div style={{ position: "absolute", bottom: 4, left: 6, fontSize: 7, color: "rgba(14,165,233,0.5)", fontFamily: "'Share Tech Mono', monospace" }}>
+          BW: 250 MHz | SWEEP: 40ms
+        </div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6, marginTop: 8, borderTop: "1px solid rgba(14,165,233,0.1)", paddingTop: 6 }}>
+        <div>
+          <div style={{ fontSize: 7, color: "#475569", textTransform: "uppercase" }}>Jitter</div>
+          <div style={{ fontSize: 8.5, fontWeight: 700, color: linkData ? "#10b981" : "#475569", fontFamily: "'Share Tech Mono', monospace" }}>
+            {linkData ? `${(Math.random() * 0.12 + 0.02).toFixed(3)} ms` : "—"}
+          </div>
+        </div>
+        <div>
+          <div style={{ fontSize: 7, color: "#475569", textTransform: "uppercase" }}>Attenuation</div>
+          <div style={{ fontSize: 8.5, fontWeight: 700, color: linkData ? `-${(80 + Math.random() * 5).toFixed(1)} dBm` : "#475569", fontFamily: "'Share Tech Mono', monospace" }}>
+            {linkData ? `-${(80 + Math.random() * 5).toFixed(1)} dBm` : "—"}
+          </div>
+        </div>
+        <div>
+          <div style={{ fontSize: 7, color: "#475569", textTransform: "uppercase" }}>C/N Ratio</div>
+          <div style={{ fontSize: 8.5, fontWeight: 700, color: snrVal > 15 ? "#10b981" : (snrVal > 0 ? "#eab308" : "#475569"), fontFamily: "'Share Tech Mono', monospace" }}>
+            {linkData ? `${(snrVal + 4.2).toFixed(1)} dB` : "—"}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ── Main Component ──────────────────────────────────────── */
 export default function RightPanel({
   selectedSat,
@@ -518,11 +612,13 @@ export default function RightPanel({
             <div style={{ display:"flex", borderBottom:"1px solid rgba(14,165,233,0.15)", marginBottom:6 }}>
               {[
                 { id:"blueprint", label:"Satellite Photo" },
-                { id:"groundtrack", label:"Ground Track" }
+                { id:"groundtrack", label:"Ground Track" },
+                { id:"signal", label:"Signal Analyzer" }
               ].map(t => (
                 <button
                   key={t.id}
-                  onClick={() => setCardMode(t.id)}
+                  onClick={() => { setCardMode(t.id); soundService.playClick(); }}
+                  onMouseEnter={() => soundService.playHover()}
                   style={{
                     flex:1,
                     background:"none", border:"none",
@@ -544,8 +640,10 @@ export default function RightPanel({
           <div style={{ marginBottom:8 }}>
             {sat.orbit_type === "DEBRIS" ? null : cardMode === "blueprint" ? (
               <SatellitePhoto sat={sat} oc={oc} />
-            ) : (
+            ) : cardMode === "groundtrack" ? (
               <GroundTrackMap sat={sat} />
+            ) : (
+              <SignalAnalyzer sat={sat} linkData={linkData} />
             )}
           </div>
 
@@ -676,7 +774,8 @@ export default function RightPanel({
               <button
                 className="btn-execute"
                 disabled={isManeuvering}
-                onClick={() => onExecuteManeuver(sat.name)}
+                onClick={() => { onExecuteManeuver(sat.name); soundService.playClick(); }}
+                onMouseEnter={() => soundService.playHover()}
                 style={{ marginTop:4 }}
               >
                 {isManeuvering ? (
@@ -707,9 +806,9 @@ export default function RightPanel({
             {nearbyObjects.map(obj => {
               const rc = riskColor(obj.risk);
               return (
-                <div key={obj.id} onClick={() => { const t = satellites.find(s=>s.name===obj.id)||debris.find(d=>d.name===obj.id); if(t) setSelectedSat(t); }}
+                <div key={obj.id} onClick={() => { const t = satellites.find(s=>s.name===obj.id)||debris.find(d=>d.name===obj.id); if(t) { setSelectedSat(t); soundService.playSelect(); } }}
                   style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"5px 8px", background:"rgba(14,165,233,0.03)", border:"1px solid rgba(14,165,233,0.1)", borderRadius:4, cursor:"pointer", transition:"all 0.15s ease" }}
-                  onMouseEnter={e=>{e.currentTarget.style.background="rgba(14,165,233,0.08)";e.currentTarget.style.borderColor="rgba(14,165,233,0.3)";}}
+                  onMouseEnter={e=>{soundService.playHover(); e.currentTarget.style.background="rgba(14,165,233,0.08)";e.currentTarget.style.borderColor="rgba(14,165,233,0.3)";}}
                   onMouseLeave={e=>{e.currentTarget.style.background="rgba(14,165,233,0.03)";e.currentTarget.style.borderColor="rgba(14,165,233,0.1)";}}>
                   <div style={{ display:"flex", alignItems:"center", gap:6 }}>
                     <span style={{ width:5, height:5, borderRadius:"50%", background:rc, boxShadow:`0 0 4px ${rc}`, flexShrink:0, display:"inline-block" }} />
@@ -740,16 +839,18 @@ export default function RightPanel({
             ].map(m => {
               const isActive = cameraMode === m.id;
               return (
-                <button key={m.id} onClick={() => setCameraMode(m.id)} style={{
-                  padding:"4px", borderRadius:3, fontSize:"8px",
-                  fontFamily:"'Rajdhani',sans-serif", fontWeight:700,
-                  letterSpacing:"0.1em", textTransform:"uppercase",
-                  cursor:"pointer", transition:"all 0.15s ease",
-                  border:`1px solid ${isActive?"rgba(14,165,233,0.7)":"rgba(30,41,67,0.8)"}`,
-                  background: isActive?"rgba(14,165,233,0.15)":"rgba(4,8,26,0.5)",
-                  color: isActive?"#fff":"#64748b",
-                  boxShadow: isActive?"0 0 10px rgba(14,165,233,0.2)":"none",
-                }}>
+                <button key={m.id} onClick={() => { setCameraMode(m.id); soundService.playClick(); }}
+                  onMouseEnter={() => soundService.playHover()}
+                  style={{
+                    padding:"4px", borderRadius:3, fontSize:"8px",
+                    fontFamily:"'Rajdhani',sans-serif", fontWeight:700,
+                    letterSpacing:"0.1em", textTransform:"uppercase",
+                    cursor:"pointer", transition:"all 0.15s ease",
+                    border:`1px solid ${isActive?"rgba(14,165,233,0.7)":"rgba(30,41,67,0.8)"}`,
+                    background: isActive?"rgba(14,165,233,0.15)":"rgba(4,8,26,0.5)",
+                    color: isActive?"#fff":"#64748b",
+                    boxShadow: isActive?"0 0 10px rgba(14,165,233,0.2)":"none",
+                  }}>
                   {m.label}
                 </button>
               );

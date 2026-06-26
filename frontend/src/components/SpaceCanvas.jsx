@@ -543,6 +543,21 @@ const EARTH_AXIAL_TILT = THREE.MathUtils.degToRad(23.5);
 // Earth sidereal day in seconds
 const EARTH_SIDEREAL_DAY = 86164.1;
 
+// ============================================================
+// DYNAMIC SUN DIRECTION (Earth Revolution Simulation)
+// ============================================================
+function getDynamicSunDirection(tOffset) {
+  const orbitalPeriod = 31536000; // 1 year in seconds
+  const yearFraction = (tOffset / orbitalPeriod) * 2 * Math.PI;
+
+  // Orbit rotation in X-Z plane (declination tilt in Y)
+  const sunX = Math.cos(yearFraction - 1.2);
+  const sunZ = Math.sin(yearFraction - 0.5);
+  const sunY = Math.sin(yearFraction) * Math.sin(EARTH_AXIAL_TILT);
+
+  return new THREE.Vector3(sunX, sunY, sunZ).normalize();
+}
+
 function PolarAurora({ position, rotation }) {
   const auroraMatRef = useRef();
   useFrame((state) => {
@@ -592,11 +607,11 @@ function Earth({ sunDirection }) {
     const loader = new THREE.TextureLoader();
     loader.setCrossOrigin("anonymous");
     const urls = {
-      day: "https://raw.githubusercontent.com/turban/webgl-earth/master/images/2_no_clouds_4k.jpg",
-      night: "https://raw.githubusercontent.com/turban/webgl-earth/master/images/5_night_4k.jpg",
-      clouds: "https://raw.githubusercontent.com/turban/webgl-earth/master/images/fair_clouds_4k.png",
-      specular: "https://raw.githubusercontent.com/turban/webgl-earth/master/images/water_4k.png",
-      normal: "https://raw.githubusercontent.com/turban/webgl-earth/master/images/elev_bump_4k.jpg",
+      day: "https://cdn.jsdelivr.net/gh/mrdoob/three.js@dev/examples/textures/planets/earth_atmos_2048.jpg",
+      night: "https://cdn.jsdelivr.net/gh/mrdoob/three.js@dev/examples/textures/planets/earth_lights_2048.png",
+      clouds: "https://cdn.jsdelivr.net/gh/mrdoob/three.js@dev/examples/textures/planets/earth_clouds_2048.png",
+      specular: "https://cdn.jsdelivr.net/gh/mrdoob/three.js@dev/examples/textures/planets/earth_specular_2048.jpg",
+      normal: "https://cdn.jsdelivr.net/gh/mrdoob/three.js@dev/examples/textures/planets/earth_normal_2048.jpg",
     };
     Object.entries(urls).forEach(([key, url]) => {
       loader.load(
@@ -632,6 +647,8 @@ function Earth({ sunDirection }) {
     // Clouds drift ~6% faster than the surface
     const cloudsRotation = earthRotation * 1.06;
 
+    const dynamicSunDir = getDynamicSunDirection(t);
+
     if (earthRef.current) earthRef.current.rotation.y = earthRotation;
     if (cloudsRef.current) cloudsRef.current.rotation.y = cloudsRotation;
     if (graticuleRef.current) graticuleRef.current.rotation.y = earthRotation;
@@ -639,9 +656,16 @@ function Earth({ sunDirection }) {
     if (earthMatRef.current) {
       earthMatRef.current.uniforms.time.value = elapsed;
       earthMatRef.current.uniforms.cloudsRotation.value = cloudsRotation;
+      earthMatRef.current.uniforms.sunDirection.value.copy(dynamicSunDir);
     }
-    if (atmoRef.current) atmoRef.current.uniforms.time.value = elapsed;
-    if (ionoRef.current) ionoRef.current.uniforms.time.value = elapsed;
+    if (atmoRef.current) {
+      atmoRef.current.uniforms.time.value = elapsed;
+      atmoRef.current.uniforms.sunDirection.value.copy(dynamicSunDir);
+    }
+    if (ionoRef.current) {
+      ionoRef.current.uniforms.time.value = elapsed;
+      ionoRef.current.uniforms.sunDirection.value.copy(dynamicSunDir);
+    }
   });
 
   // Lat/Lon graticule (computed once)
@@ -777,9 +801,9 @@ function Earth({ sunDirection }) {
 // CINEMATIC SUN WITH LENS FLARE & CORONA
 // ============================================================
 function CinematicSun() {
+  const groupRef = useRef();
   const coronaRef = useRef();
   const flareRef = useRef();
-  const sunPos = new THREE.Vector3(-25, 8, -12);
 
   useFrame((state) => {
     const t = state.clock.getElapsedTime();
@@ -791,10 +815,17 @@ function CinematicSun() {
     if (flareRef.current) {
       flareRef.current.rotation.z = t * 0.15;
     }
+
+    if (groupRef.current) {
+      const simTime = window.simTimeOffset ?? 0;
+      const sunDir = getDynamicSunDirection(simTime);
+      const sunPos = sunDir.clone().multiplyScalar(120);
+      groupRef.current.position.copy(sunPos);
+    }
   });
 
   return (
-    <group position={sunPos.toArray()}>
+    <group ref={groupRef}>
       {/* Core solar disk */}
       <mesh>
         <sphereGeometry args={[1.8, 32, 32]} />
@@ -929,6 +960,8 @@ function CameraController({ selectedSat, cameraMode }) {
 
   useFrame(() => {
     if (!controls) return;
+    let needsUpdate = false;
+
     if (selectedSat && (cameraMode === "tracking" || cameraMode === "pov")) {
       const targetPos = new THREE.Vector3(
         (selectedSat.x ?? 0) / 1000,
@@ -937,35 +970,56 @@ function CameraController({ selectedSat, cameraMode }) {
       );
       if (cameraMode === "pov") {
         controls.target.copy(targetPos);
-        const satDirection = targetPos.clone().normalize();
-        const crossDir = new THREE.Vector3(0, 1, 0).cross(satDirection).normalize();
+        const len = targetPos.length();
+        const satDirection = len > 0.0001 ? targetPos.clone().normalize() : new THREE.Vector3(0, 0, 1);
+        const cross = new THREE.Vector3(0, 1, 0).cross(satDirection);
+        const crossDir = cross.lengthSq() > 0.0001 ? cross.normalize() : new THREE.Vector3(1, 0, 0);
         const povCamPos = targetPos.clone().sub(crossDir.clone().multiplyScalar(0.4)).add(satDirection.clone().multiplyScalar(0.12));
         camera.position.copy(povCamPos);
+        needsUpdate = true;
       } else {
         controls.target.lerp(targetPos, 0.08);
         const desiredCamPos = targetPos.clone().add(new THREE.Vector3(1.4, 0.9, 1.4));
         camera.position.lerp(desiredCamPos, 0.05);
+        needsUpdate = true;
       }
     } else {
-      controls.target.lerp(new THREE.Vector3(0, 0, 0), 0.06);
+      if (controls.target.lengthSq() > 0.0001) {
+        controls.target.lerp(new THREE.Vector3(0, 0, 0), 0.06);
+        needsUpdate = true;
+      }
       if (cameraMode === "earth") {
-        const radialPos = camera.position.clone().normalize().multiplyScalar(8.8);
+        const camLen = camera.position.length();
+        const radialPos = camLen > 0.0001 ? camera.position.clone().normalize().multiplyScalar(8.8) : new THREE.Vector3(0, 0, 8.8);
         camera.position.lerp(radialPos, 0.06);
+        needsUpdate = true;
       } else if (cameraMode === "analysis") {
         camera.position.lerp(new THREE.Vector3(0, 20.0, 0.01), 0.06);
+        needsUpdate = true;
       } else if (cameraMode === "global") {
         const currentRadius = camera.position.length();
         if (currentRadius < 24.0) {
-          const radialPos = camera.position.clone().normalize().multiplyScalar(26.0);
+          const camLen = camera.position.length();
+          const radialPos = camLen > 0.0001 ? camera.position.clone().normalize().multiplyScalar(26.0) : new THREE.Vector3(0, 0, 26.0);
           camera.position.lerp(radialPos, 0.05);
+          needsUpdate = true;
         }
       }
     }
 
     // Absolute guard to prevent the camera from going inside the Earth mesh (causing it to vanish)
     const minDistanceToCenter = 6.6;
-    if (camera.position.length() < minDistanceToCenter) {
-      camera.position.normalize().multiplyScalar(minDistanceToCenter);
+    const camDist = camera.position.length();
+    if (camDist < minDistanceToCenter) {
+      if (camDist < 0.0001) {
+        camera.position.set(0, 0, minDistanceToCenter);
+      } else {
+        camera.position.normalize().multiplyScalar(minDistanceToCenter);
+      }
+      needsUpdate = true;
+    }
+
+    if (needsUpdate) {
       controls.update();
     }
   });
@@ -1080,7 +1134,10 @@ function OrbitLine({ satellite, color, isSelected, hasSelection }) {
 // ============================================================
 function SatelliteMesh({ sat, index, onSelect, isSelected, predictions = [], thrusterActive }) {
   const meshRef  = useRef();
+  const modelGroupRef = useRef();
+  const markerGroupRef = useRef();
   const [hovered, setHovered] = useState(false);
+  const { camera } = useThree();
   const activeHazard = predictions.find(p => p.satellite === sat.name && p.recommended_action !== "Maneuver Completed");
 
   const a  = sat.a / 1000;
@@ -1109,6 +1166,12 @@ function SatelliteMesh({ sat, index, onSelect, isSelected, predictions = [], thr
     const z_eci = xp * (sin_peri * sin_i) + yp * (cos_peri * sin_i);
     meshRef.current.position.set(x_eci, z_eci, y_eci);
     sat.x = x_eci * 1000; sat.z = z_eci * 1000; sat.y = y_eci * 1000;
+
+    // LOD: dynamic visibility toggle based on camera distance
+    const camDist = meshRef.current.position.distanceTo(camera.position);
+    const shouldShowModel = isSelected || camDist < 5.0;
+    if (modelGroupRef.current) modelGroupRef.current.visible = shouldShowModel;
+    if (markerGroupRef.current) markerGroupRef.current.visible = !shouldShowModel;
   });
 
   const satColor   = getOrbitColor(sat.orbit_type);
@@ -1131,25 +1194,33 @@ function SatelliteMesh({ sat, index, onSelect, isSelected, predictions = [], thr
         <meshBasicMaterial transparent opacity={0} depthWrite={false} />
       </mesh>
 
-      {/* Core glowing marker */}
-      <mesh>
-        <sphereGeometry args={[markerSize, 10, 10]} />
-        <meshBasicMaterial color={activeColor} toneMapped={false} />
-      </mesh>
+      {/* DETAILED 3D MODEL: rendered when close or selected */}
+      <group ref={modelGroupRef} visible={false}>
+        <SatelliteModel satName={sat.name} color={activeColor} isSelected={isSelected} thrusterActive={thrusterActive} />
+      </group>
 
-      {/* Hover/selection outer glow */}
-      {(hovered || isSelected) && (
+      {/* GLOWING MARKER: rendered when far */}
+      <group ref={markerGroupRef} visible={true}>
+        {/* Core glowing marker */}
         <mesh>
-          <sphereGeometry args={[glowSize, 10, 10]} />
-          <meshBasicMaterial
-            color={activeColor}
-            transparent opacity={glowOpacity}
-            blending={THREE.AdditiveBlending}
-            depthWrite={false}
-            toneMapped={false}
-          />
+          <sphereGeometry args={[markerSize, 10, 10]} />
+          <meshBasicMaterial color={activeColor} toneMapped={false} />
         </mesh>
-      )}
+
+        {/* Hover/selection outer glow */}
+        {(hovered || isSelected) && (
+          <mesh>
+            <sphereGeometry args={[glowSize, 10, 10]} />
+            <meshBasicMaterial
+              color={activeColor}
+              transparent opacity={glowOpacity}
+              blending={THREE.AdditiveBlending}
+              depthWrite={false}
+              toneMapped={false}
+            />
+          </mesh>
+        )}
+      </group>
 
       {/* Hover name label */}
       {hovered && !isSelected && (
@@ -1195,118 +1266,328 @@ function SatelliteMesh({ sat, index, onSelect, isSelected, predictions = [], thr
           </Html>
         </>
       )}
-
-      {/* Thruster plume */}
-      {isSelected && thrusterActive && (
-        <points position={[0, -0.15, 0]}>
-          <sphereGeometry args={[0.04, 6, 6]} />
-          <pointsMaterial size={0.08} color="#f97316" blending={THREE.AdditiveBlending} transparent opacity={0.85} />
-        </points>
-      )}
     </group>
   );
 }
 
-// ──────────────────────────────────────────────────────────────
-// (legacy placeholder — keep signature so nothing else breaks)
-const SatelliteModel = ({ color, satName, isSelected }) => {
+// ============================================================
+// HIGH-FIDELITY 3D SATELLITE MODELS WITH SUN-TRACKING PANELS
+// ============================================================
+const SatelliteModel = ({ color, satName, isSelected, thrusterActive }) => {
   const panelRef = useRef();
+
+  // Track the sun direction dynamically
   useFrame((state) => {
     if (panelRef.current) {
-      panelRef.current.rotation.y = state.clock.getElapsedTime() * 0.3;
+      const simTime = window.simTimeOffset ?? 0;
+      const sunDir = getDynamicSunDirection(simTime);
+
+      // Get parent quaternion to convert world sun direction into local direction
+      const parentQ = panelRef.current.parent.getWorldQuaternion(new THREE.Quaternion());
+      const localSun = sunDir.clone().applyQuaternion(parentQ.invert());
+
+      // Calculate rotation in local Y-Z plane to face the sun
+      const angle = Math.atan2(localSun.z, localSun.y);
+      panelRef.current.rotation.x = angle;
     }
   });
 
   const isISS = satName === "ISS (ZARYA)";
   const isHub = satName === "HUBBLE";
+  const isStarlink = satName.includes("STARLINK");
+
+  // Materials system (PBR properties)
+  const metallicInsulation = {
+    color: "#d4af37", // Gold foil
+    metalness: 0.92,
+    roughness: 0.28,
+    emissive: "#886611",
+    emissiveIntensity: 0.15
+  };
+  const chromeMaterial = {
+    color: "#e2e8f0", // Silver metal
+    metalness: 0.98,
+    roughness: 0.08
+  };
+  const darkMetal = {
+    color: "#2c3540",
+    metalness: 0.85,
+    roughness: 0.35
+  };
+  const solarPanelMaterial = {
+    color: "#0a2240", // Deep navy blue solar panels
+    metalness: 0.88,
+    roughness: 0.12,
+    emissive: "#04142d",
+    emissiveIntensity: 0.2
+  };
+  const radiatorMaterial = {
+    color: "#f8fafc",
+    metalness: 0.1,
+    roughness: 0.95
+  };
 
   if (isISS) {
-    // ISS-like model
+    // Highly detailed ISS structure
     return (
       <group>
-        {/* Main truss */}
+        {/* Main Central Truss */}
         <mesh rotation={[0, 0, Math.PI / 2]}>
-          <cylinderGeometry args={[0.018, 0.018, 0.45, 6]} />
-          <meshStandardMaterial color="#c0ccd0" metalness={0.9} roughness={0.15} />
+          <cylinderGeometry args={[0.012, 0.012, 0.72, 8]} />
+          <meshStandardMaterial {...chromeMaterial} />
         </mesh>
-        {/* Hab modules */}
-        {[-0.08, 0, 0.08].map((z, i) => (
-          <mesh key={i} position={[0, 0, z]}>
-            <cylinderGeometry args={[0.03, 0.03, 0.1, 8]} />
-            <meshStandardMaterial color="#a8b8c0" metalness={0.85} roughness={0.2} />
-          </mesh>
+
+        {/* Radiators (thermal control white arrays, extending opposite to solar wings) */}
+        {[-0.08, 0.08].map((x, idx) => (
+          <group key={`rad-${idx}`} position={[x, -0.06, 0]}>
+            <mesh rotation={[Math.PI / 2, 0, 0]}>
+              <boxGeometry args={[0.05, 0.005, 0.18]} />
+              <meshStandardMaterial {...radiatorMaterial} />
+            </mesh>
+          </group>
         ))}
-        {/* Solar panels x4 */}
-        {[[-0.18, 0.07], [-0.18, -0.07], [0.18, 0.07], [0.18, -0.07]].map(([x, z], i) => (
-          <mesh key={`sp${i}`} position={[x, 0, z]}>
-            <boxGeometry args={[0.2, 0.005, 0.065]} />
-            <meshStandardMaterial color={i % 2 === 0 ? "#1e3a8a" : "#1e40af"} metalness={0.4} roughness={0.15} emissive="#0f1f54" emissiveIntensity={0.3} />
-          </mesh>
+
+        {/* Pressurized Modules (Hab modules - stacked cylinders at center) */}
+        {[-0.08, -0.03, 0.02, 0.07].map((z, i) => (
+          <group key={i} position={[0, 0, z]} rotation={[Math.PI / 2, 0, 0]}>
+            <mesh>
+              <cylinderGeometry args={[0.028, 0.028, 0.07, 12]} />
+              <meshStandardMaterial {...(i % 3 === 0 ? metallicInsulation : chromeMaterial)} />
+            </mesh>
+            {/* Docking rings */}
+            <mesh position={[0, 0.036, 0]}>
+              <torusGeometry args={[0.015, 0.005, 8, 16]} />
+              <meshStandardMaterial {...darkMetal} />
+            </mesh>
+            <mesh position={[0, -0.036, 0]}>
+              <torusGeometry args={[0.015, 0.005, 8, 16]} />
+              <meshStandardMaterial {...darkMetal} />
+            </mesh>
+          </group>
         ))}
-        {/* Antenna */}
-        <mesh position={[0, 0.06, 0]}>
-          <cylinderGeometry args={[0.006, 0.006, 0.1, 4]} />
-          <meshStandardMaterial color="#dde0e4" metalness={0.8} />
+
+        {/* Cupola window module (facing down towards Earth) */}
+        <mesh position={[0, -0.032, 0.02]}>
+          <sphereGeometry args={[0.014, 8, 8, 0, Math.PI * 2, 0, Math.PI / 2]} />
+          <meshStandardMaterial color="#020813" metalness={0.9} roughness={0.1} />
         </mesh>
+
+        {/* Dynamic Tracking Solar Arrays x 8 */}
+        <group ref={panelRef}>
+          {/* Solar Wing 1 (Port) */}
+          <group position={[-0.32, 0, 0]}>
+            {/* Array Truss extension */}
+            <mesh rotation={[0, 0, Math.PI / 2]}>
+              <cylinderGeometry args={[0.005, 0.005, 0.08, 6]} />
+              <meshStandardMaterial {...chromeMaterial} />
+            </mesh>
+            {/* Panels */}
+            {[-0.08, -0.03, 0.03, 0.08].map((z, i) => (
+              <mesh key={`p_sp1_${i}`} position={[0, 0, z]}>
+                <boxGeometry args={[0.18, 0.003, 0.045]} />
+                <meshStandardMaterial {...solarPanelMaterial} />
+              </mesh>
+            ))}
+          </group>
+          {/* Solar Wing 2 (Starboard) */}
+          <group position={[0.32, 0, 0]}>
+            <mesh rotation={[0, 0, Math.PI / 2]}>
+              <cylinderGeometry args={[0.005, 0.005, 0.08, 6]} />
+              <meshStandardMaterial {...chromeMaterial} />
+            </mesh>
+            {[-0.08, -0.03, 0.03, 0.08].map((z, i) => (
+              <mesh key={`p_sp2_${i}`} position={[0, 0, z]}>
+                <boxGeometry args={[0.18, 0.003, 0.045]} />
+                <meshStandardMaterial {...solarPanelMaterial} />
+              </mesh>
+            ))}
+          </group>
+        </group>
       </group>
     );
   }
 
   if (isHub) {
+    // Highly detailed Hubble telescope
     return (
       <group>
-        <mesh>
-          <cylinderGeometry args={[0.035, 0.03, 0.18, 12]} />
-          <meshStandardMaterial color="#888" metalness={0.6} roughness={0.3} />
+        {/* Main Cylindrical Mirror Tube */}
+        <mesh rotation={[Math.PI / 2, 0, 0]}>
+          <cylinderGeometry args={[0.034, 0.03, 0.18, 16]} />
+          <meshStandardMaterial {...chromeMaterial} />
         </mesh>
-        <mesh position={[0, 0.1, 0]}>
-          <cylinderGeometry args={[0.015, 0.035, 0.05, 8]} />
-          <meshStandardMaterial color="#999" metalness={0.7} roughness={0.2} />
-        </mesh>
-        {/* Solar wings */}
-        {[[-0.16, 0], [0.16, 0]].map(([x], i) => (
-          <mesh key={i} position={[x, 0, 0]}>
-            <boxGeometry args={[0.18, 0.004, 0.055]} />
-            <meshStandardMaterial color="#1e40af" emissive="#1d4ed8" emissiveIntensity={0.25} roughness={0.08} />
+
+        {/* Open Aperture Mirror Cover Hatch (tilted disk at top) */}
+        <group position={[0, 0.092, -0.015]} rotation={[-Math.PI / 3, 0, 0]}>
+          <mesh>
+            <cylinderGeometry args={[0.034, 0.034, 0.004, 16]} />
+            <meshStandardMaterial {...chromeMaterial} />
           </mesh>
+        </group>
+
+        {/* Back Aft Shroud (insulation box at bottom) */}
+        <mesh position={[0, -0.11, 0]}>
+          <boxGeometry args={[0.068, 0.042, 0.068]} />
+          <meshStandardMaterial {...metallicInsulation} />
+        </mesh>
+
+        {/* High Gain Communication Antennas */}
+        {[-0.036, 0.036].map((x, idx) => (
+          <group key={idx} position={[x, -0.04, 0.034]} rotation={[Math.PI / 6, idx === 0 ? -Math.PI / 4 : Math.PI / 4, 0]}>
+            <mesh>
+              <cylinderGeometry args={[0.002, 0.002, 0.06, 4]} />
+              <meshStandardMaterial {...darkMetal} />
+            </mesh>
+            <mesh position={[0, 0.03, 0]} rotation={[Math.PI / 2, 0, 0]}>
+              <coneGeometry args={[0.016, 0.015, 8, 1, true]} />
+              <meshStandardMaterial color="#fff" {...radiatorMaterial} />
+            </mesh>
+          </group>
         ))}
+
+        {/* Dynamic Tracking Solar Wings */}
+        <group ref={panelRef}>
+          {[-0.14, 0.14].map((x, idx) => (
+            <group key={idx} position={[x, 0, 0]}>
+              {/* Connection arm */}
+              <mesh rotation={[0, 0, Math.PI / 2]}>
+                <cylinderGeometry args={[0.004, 0.004, 0.08, 6]} />
+                <meshStandardMaterial {...chromeMaterial} />
+              </mesh>
+              {/* Solar wing grid */}
+              <mesh position={[idx === 0 ? -0.06 : 0.06, 0, 0]}>
+                <boxGeometry args={[0.16, 0.004, 0.08]} />
+                <meshStandardMaterial {...solarPanelMaterial} />
+              </mesh>
+            </group>
+          ))}
+        </group>
       </group>
     );
   }
 
-  // Generic satellite with rotating solar panel orientation
+  if (isStarlink) {
+    // Sleek single-wing Starlink design
+    return (
+      <group>
+        {/* Flat Chassis bus (Starlink signature flat design) */}
+        <mesh>
+          <boxGeometry args={[0.048, 0.012, 0.098]} />
+          <meshStandardMaterial {...chromeMaterial} />
+        </mesh>
+
+        {/* Gold insulated components underneath */}
+        <mesh position={[0, -0.008, 0]}>
+          <boxGeometry args={[0.038, 0.008, 0.088]} />
+          <meshStandardMaterial {...metallicInsulation} />
+        </mesh>
+
+        {/* Dynamic Tracking Single Solar Wing (extends from one side only) */}
+        <group ref={panelRef}>
+          <group position={[0.064, 0, 0]}>
+            {/* Wing connector */}
+            <mesh rotation={[0, 0, Math.PI / 2]}>
+              <cylinderGeometry args={[0.003, 0.003, 0.03, 4]} />
+              <meshStandardMaterial {...darkMetal} />
+            </mesh>
+            {/* Long single array */}
+            <mesh position={[0.11, 0, 0]}>
+              <boxGeometry args={[0.22, 0.003, 0.068]} />
+              <meshStandardMaterial {...solarPanelMaterial} />
+            </mesh>
+          </group>
+        </group>
+
+        {/* Crypton Ion Thruster nozzle (pulsing glowing blue component at rear) */}
+        <group position={[0, 0, -0.052]} rotation={[Math.PI / 2, 0, 0]}>
+          <mesh>
+            <cylinderGeometry args={[0.008, 0.012, 0.012, 8]} />
+            <meshStandardMaterial {...darkMetal} />
+          </mesh>
+          <pointLight color="#38bdf8" intensity={0.5} distance={1.2} />
+        </group>
+
+        {/* Maneuver Thruster plume */}
+        {isSelected && thrusterActive && (
+          <group position={[0, 0, -0.064]} rotation={[-Math.PI / 2, 0, 0]}>
+            <mesh>
+              <coneGeometry args={[0.022, 0.18, 12, 1, true]} />
+              <meshBasicMaterial color="#06b6d4" transparent opacity={0.88} blending={THREE.AdditiveBlending} toneMapped={false} />
+            </mesh>
+          </group>
+        )}
+      </group>
+    );
+  }
+
+  // Generic Satellite (Weather, Navigation, Communication)
   return (
     <group>
+      {/* Cubical Main Body wrapped in Gold Foil */}
       <mesh>
-        <boxGeometry args={[0.055, 0.055, 0.1]} />
-        <meshStandardMaterial color="#8a9ab0" metalness={0.88} roughness={0.18} />
+        <boxGeometry args={[0.056, 0.056, 0.068]} />
+        <meshStandardMaterial {...metallicInsulation} />
       </mesh>
-      {/* Rotating solar panels */}
+
+      {/* Instrument sensors (cylinders/lenses on body) */}
+      <mesh position={[0, 0, 0.036]}>
+        <cylinderGeometry args={[0.012, 0.015, 0.012, 8]} />
+        <meshStandardMaterial {...darkMetal} />
+      </mesh>
+      <mesh position={[0, 0, 0.041]}>
+        <sphereGeometry args={[0.01, 8, 8]} />
+        <meshStandardMaterial color="#0ea5e9" metalness={0.95} roughness={0.05} />
+      </mesh>
+
+      {/* Dynamic Tracking Solar Wings (Dual Panels) */}
       <group ref={panelRef}>
-        <mesh position={[-0.14, 0, 0]}>
-          <boxGeometry args={[0.16, 0.004, 0.058]} />
-          <meshStandardMaterial color="#1a3a9a" emissive="#1533a0" emissiveIntensity={0.25} roughness={0.08} metalness={0.3} />
+        <group position={[-0.14, 0, 0]}>
+          {/* Connection arm */}
+          <mesh rotation={[0, 0, Math.PI / 2]}>
+            <cylinderGeometry args={[0.004, 0.004, 0.16, 6]} />
+            <meshStandardMaterial {...chromeMaterial} />
+          </mesh>
+          {/* Panel */}
+          <mesh position={[-0.04, 0, 0]}>
+            <boxGeometry args={[0.16, 0.004, 0.06]} />
+            <meshStandardMaterial {...solarPanelMaterial} />
+          </mesh>
+        </group>
+        <group position={[0.14, 0, 0]}>
+          <mesh rotation={[0, 0, Math.PI / 2]}>
+            <cylinderGeometry args={[0.004, 0.004, 0.16, 6]} />
+            <meshStandardMaterial {...chromeMaterial} />
+          </mesh>
+          <mesh position={[0.04, 0, 0]}>
+            <boxGeometry args={[0.16, 0.004, 0.06]} />
+            <meshStandardMaterial {...solarPanelMaterial} />
+          </mesh>
+        </group>
+      </group>
+
+      {/* Parabolic Antenna Dish (underneath facing Earth) */}
+      <group position={[0, -0.046, -0.01]} rotation={[Math.PI / 6, 0, 0]}>
+        {/* Support arm */}
+        <mesh>
+          <cylinderGeometry args={[0.003, 0.003, 0.03, 4]} />
+          <meshStandardMaterial {...chromeMaterial} />
         </mesh>
-        <mesh position={[0.14, 0, 0]}>
-          <boxGeometry args={[0.16, 0.004, 0.058]} />
-          <meshStandardMaterial color="#1a3a9a" emissive="#1533a0" emissiveIntensity={0.25} roughness={0.08} metalness={0.3} />
-        </mesh>
-        {/* Panel connections */}
-        <mesh rotation={[0, 0, Math.PI / 2]}>
-          <cylinderGeometry args={[0.006, 0.006, 0.18, 4]} />
-          <meshStandardMaterial color="#445566" metalness={0.7} />
+        {/* Dish */}
+        <mesh position={[0, -0.012, 0]} rotation={[0, 0, 0]}>
+          <coneGeometry args={[0.024, 0.018, 12, 1, true]} />
+          <meshStandardMaterial color="#f1f5f9" {...radiatorMaterial} side={THREE.DoubleSide} />
         </mesh>
       </group>
-      {/* Antenna dish */}
-      <mesh position={[0, -0.08, 0]} rotation={[Math.PI / 4, 0, 0]}>
-        <coneGeometry args={[0.022, 0.03, 12, 1, true]} />
-        <meshStandardMaterial color={color} transparent opacity={0.8} toneMapped={false} metalness={0.6} />
-      </mesh>
-      {/* Comm sphere */}
-      <mesh position={[0, -0.062, 0.025]}>
-        <sphereGeometry args={[0.012, 8, 8]} />
-        <meshBasicMaterial color={color} toneMapped={false} />
-      </mesh>
+
+      {/* Maneuver Thruster plume */}
+      {isSelected && thrusterActive && (
+        <group position={[0, -0.046, -0.01]} rotation={[Math.PI, 0, 0]}>
+          <mesh>
+            <coneGeometry args={[0.018, 0.15, 8, 1, true]} />
+            <meshBasicMaterial color="#ef4444" transparent opacity={0.88} blending={THREE.AdditiveBlending} toneMapped={false} />
+          </mesh>
+        </group>
+      )}
     </group>
   );
 };
@@ -1568,6 +1849,7 @@ function ConstellationSatellites({ showLEO, showMEO, showGEO, showPolar, showSSO
 // SOLAR WIND / SPACE WEATHER FLOW
 // ============================================================
 function SolarWindFlow() {
+  const groupRef = useRef();
   const pointsRef = useRef();
   const particleCount = 220;
   const [positions, speeds] = useMemo(() => {
@@ -1583,12 +1865,21 @@ function SolarWindFlow() {
   }, []);
 
   useFrame((state, delta) => {
+    const simTime = window.simTimeOffset ?? 0;
+    const sunDir = getDynamicSunDirection(simTime);
+
+    if (groupRef.current) {
+      const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(1, 0, 0), sunDir);
+      groupRef.current.quaternion.copy(q);
+    }
+
     if (!pointsRef.current) return;
     const posArr = pointsRef.current.geometry.attributes.position.array;
     for (let idx = 0; idx < particleCount; idx++) {
-      posArr[idx*3] += speeds[idx] * delta;
-      if (posArr[idx*3] > 40) {
-        posArr[idx*3] = -40;
+      // Flow along local negative X axis (from +40 to -40, i.e., from Sun to Earth)
+      posArr[idx*3] -= speeds[idx] * delta;
+      if (posArr[idx*3] < -40) {
+        posArr[idx*3] = 40;
         posArr[idx*3+1] = -25 + Math.random() * 50;
         posArr[idx*3+2] = -40 + Math.random() * 80;
       }
@@ -1597,12 +1888,14 @@ function SolarWindFlow() {
   });
 
   return (
-    <points ref={pointsRef}>
-      <bufferGeometry>
-        <bufferAttribute attach="attributes-position" args={[positions, 3]} />
-      </bufferGeometry>
-      <pointsMaterial size={0.1} color="#fbbf24" transparent opacity={0.28} blending={THREE.AdditiveBlending} depthWrite={false} />
-    </points>
+    <group ref={groupRef}>
+      <points ref={pointsRef}>
+        <bufferGeometry>
+          <bufferAttribute attach="attributes-position" args={[positions, 3]} />
+        </bufferGeometry>
+        <pointsMaterial size={0.1} color="#fbbf24" transparent opacity={0.28} blending={THREE.AdditiveBlending} depthWrite={false} />
+      </points>
+    </group>
   );
 }
 
@@ -1978,10 +2271,10 @@ function MagnetosphereFieldLines({ sunDirection }) {
           const x = r * sinTheta * Math.cos(phi);
           const z = r * sinTheta * Math.sin(phi);
 
-          // Magnetotail stretching away from the sun
+          // Magnetotail stretching away from the sun (assume sun is along +X local axis)
           const dist = r;
           const tailStretch = Math.pow(dist / EARTH_RADIUS, 1.8) * 0.15;
-          const oppositeSun = sunDirection.clone().multiplyScalar(-1);
+          const oppositeSun = new THREE.Vector3(-1, 0, 0); // static tail direction
           const pos = new THREE.Vector3(x, y, z).add(oppositeSun.multiplyScalar(tailStretch));
 
           pts.push(pos);
@@ -1990,19 +2283,22 @@ function MagnetosphereFieldLines({ sunDirection }) {
       }
     });
     return lines;
-  }, [sunDirection]);
+  }, []);
 
   useFrame((state) => {
+    const simTime = window.simTimeOffset ?? 0;
+    const sunDir = getDynamicSunDirection(simTime);
     if (groupRef.current) {
-      groupRef.current.rotation.y = state.clock.getElapsedTime() * 0.04;
+      const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(1, 0, 0), sunDir);
+      groupRef.current.quaternion.copy(q);
     }
   });
 
-  const bowShockPos = useMemo(() => sunDirection.clone().multiplyScalar(EARTH_RADIUS * 2.05), [sunDirection]);
-  const bowShockRotation = useMemo(() => new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), sunDirection), [sunDirection]);
+  const bowShockPos = new THREE.Vector3(EARTH_RADIUS * 2.05, 0, 0);
+  const bowShockRotation = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), new THREE.Vector3(1, 0, 0));
 
   return (
-    <group ref={groupRef} rotation={[EARTH_AXIAL_TILT, 0, 0]}>
+    <group ref={groupRef}>
       {/* Magnetic field line loops */}
       {loops.map((pts, idx) => (
         <Line
@@ -2046,6 +2342,31 @@ function MagnetosphereFieldLines({ sunDirection }) {
 }
 
 // ============================================================
+// CINEMATIC DYNAMIC LIGHTS (Earth Revolution Shading)
+// ============================================================
+function CinematicLights() {
+  const dirLightRef = useRef();
+  const pointLightRef = useRef();
+
+  useFrame(() => {
+    const simTime = window.simTimeOffset ?? 0;
+    const sunDir = getDynamicSunDirection(simTime);
+    const sunPos = sunDir.clone().multiplyScalar(120);
+
+    if (dirLightRef.current) dirLightRef.current.position.copy(sunPos);
+    if (pointLightRef.current) pointLightRef.current.position.copy(sunPos);
+  });
+
+  return (
+    <>
+      <ambientLight intensity={0.08} />
+      <directionalLight ref={dirLightRef} position={[-22, 8, -12]} intensity={5.0} color="#fff5e0" />
+      <pointLight ref={pointLightRef} position={[-22, 8, -12]} intensity={1.5} distance={120} color="#ffe080" />
+    </>
+  );
+}
+
+// ============================================================
 // MAIN EXPORT
 // ============================================================
 export default function SpaceCanvas({
@@ -2076,7 +2397,11 @@ export default function SpaceCanvas({
   };
 
   return (
-    <div className="w-full h-full relative scanlines">
+    <div
+      className="w-full h-full relative scanlines"
+      style={{ touchAction: "none" }}
+      onDoubleClick={(e) => e.preventDefault()}
+    >
       {/* ── RESET VIEW BUTTON ── */}
       {selectedSat && (
         <button
@@ -2125,9 +2450,8 @@ export default function SpaceCanvas({
         gl={{ antialias: true, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.05 }}
       >
         <color attach="background" args={["#000004"]} />
-        <ambientLight intensity={0.08} />
-        <directionalLight position={[-22, 8, -12]} intensity={5.0} color="#fff5e0" />
-        <pointLight position={[-22, 8, -12]} intensity={1.5} distance={120} color="#ffe080" />
+        {/* Cinematic Dynamic Shading */}
+        <CinematicLights />
 
         {/* Deep Space + Milky Way */}
         <SpaceEnvironment />

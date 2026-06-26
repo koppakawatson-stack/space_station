@@ -4,6 +4,7 @@ import {
   BarChart3, Settings, ShieldAlert, FileText, Radio,
   Sun, Search, X, ChevronRight, Filter, Sparkles
 } from "lucide-react";
+import { soundService } from "../utils/soundService";
 
 const ORBIT_COLORS = {
   LEO:   "#0ea5e9",
@@ -53,8 +54,8 @@ function OrbitDesigner({ onDeploySat }) {
   };
 
   return (
-    <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-      <div className="hud-bracket mx-2 mt-2 px-2.5 py-2.5 rounded-lg flex-shrink-0 relative" style={{ background: "rgba(4,8,26,0.8)" }}>
+    <div className="flex-1 flex flex-col min-h-0 overflow-y-auto">
+      <div className="hud-bracket mx-2 mt-2 mb-2 px-2.5 py-2.5 rounded-lg relative" style={{ background: "rgba(4,8,26,0.8)" }}>
         <div className="hud-corners-bottom" />
         <div className="section-header" style={{ fontSize: "9px", marginBottom: 10 }}>
           <Radio style={{ width: 10, height: 10, color: "#f97316" }} />
@@ -131,7 +132,8 @@ function OrbitDesigner({ onDeploySat }) {
 
           <button
             className="btn-execute"
-            onClick={handleDeploy}
+            onClick={() => { handleDeploy(); soundService.playManeuver(); }}
+            onMouseEnter={() => soundService.playHover()}
             style={{ marginTop: 6, borderColor: "#f97316", background: "linear-gradient(135deg, rgba(249,115,22,0.2), rgba(249,115,22,0.05))" }}
           >
             <Sparkles style={{ width: 11, height: 11 }} /> Inject to Orbit
@@ -203,7 +205,8 @@ export default function Sidebar({
           <button
             key={id}
             className={`nav-btn-icon ${activeTab===id ? "active" : ""}`}
-            onClick={() => setActiveTab(id)}
+            onClick={() => { setActiveTab(id); soundService.playClick(); }}
+            onMouseEnter={() => soundService.playHover()}
             title={id.charAt(0).toUpperCase()+id.slice(1)}
           >
             <Icon style={{ width:15, height:15 }} />
@@ -231,7 +234,8 @@ export default function Sidebar({
           return (
             <button
               key={id}
-              onClick={() => setActiveTab(id)}
+              onClick={() => { setActiveTab(id); soundService.playClick(); }}
+              onMouseEnter={() => soundService.playHover()}
               className={`nav-btn ${isActive ? "active" : ""}`}
             >
               <Icon style={{ width:13, height:13, flexShrink:0, color:isActive ? "#0ea5e9" : "#475569" }} />
@@ -283,7 +287,8 @@ export default function Sidebar({
                   key={f}
                   className={`filter-chip ${satFilter===f ? "active" : ""}`}
                   style={{ ...(f !== "ALL" && ORBIT_COLORS[f] && satFilter===f ? { borderColor: ORBIT_COLORS[f], color: ORBIT_COLORS[f] } : {}) }}
-                  onClick={() => setSatFilter(f)}
+                  onClick={() => { setSatFilter(f); soundService.playClick(); }}
+                  onMouseEnter={() => soundService.playHover()}
                 >
                   {f}
                 </button>
@@ -308,6 +313,7 @@ export default function Sidebar({
                       key={sat.name}
                       className={`sat-list-item ${isActive ? "active" : ""}`}
                       onClick={() => onSelectSat && onSelectSat(sat)}
+                      onMouseEnter={() => soundService.playHover()}
                     >
                       {/* Orbit color dot */}
                       <span style={{ width:6, height:6, borderRadius:"50%", background:oc, boxShadow:`0 0 5px ${oc}`, flexShrink:0, display:"inline-block" }} />

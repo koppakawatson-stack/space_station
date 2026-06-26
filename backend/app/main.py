@@ -1,3 +1,4 @@
+import os
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Dict, List, Any
@@ -7,9 +8,15 @@ from app.simulation import active_satellites, tracked_debris, get_collisions
 app = FastAPI(title="OrbitalGuard AI - Space Traffic Management API")
 
 # Enable CORS for frontend integration
+allowed_origins_env = os.getenv("ALLOWED_ORIGINS")
+if allowed_origins_env:
+    origins = [origin.strip() for origin in allowed_origins_env.split(",") if origin.strip()]
+else:
+    origins = ["*"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all for local dev
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

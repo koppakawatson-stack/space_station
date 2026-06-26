@@ -5,8 +5,12 @@ import BottomPanel from "./components/BottomPanel";
 import SpaceCanvas from "./components/SpaceCanvas";
 import {
   AlertTriangle, Shield, Radio, Settings, Globe,
-  RadioTower, Satellite, Menu, X, ChevronUp, Layers, Monitor
+  RadioTower, Satellite, Menu, X, ChevronUp, Layers, Monitor,
+  Volume2, VolumeX
 } from "lucide-react";
+import { soundService } from "./utils/soundService";
+
+const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
 /* ─── breakpoint hook ─────────────────────────────────────── */
 function useBreakpoint() {
@@ -50,6 +54,17 @@ export default function App() {
   const [launchNotification, setLaunchNotification] = useState(null);
   const [showQuickStats, setShowQuickStats] = useState(false);
 
+  const [isMuted, setIsMuted] = useState(() => soundService.isMuted());
+
+  const handleToggleMute = useCallback(() => {
+    const newMuted = !isMuted;
+    setIsMuted(newMuted);
+    soundService.setMuted(newMuted);
+    if (!newMuted) {
+      soundService.playClick();
+    }
+  }, [isMuted]);
+
   /* sidebar/panel collapse state */
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isRightPanelCollapsed, setIsRightPanelCollapsed] = useState(false);
@@ -92,7 +107,7 @@ export default function App() {
 
   /* ── initial data ──────────────────────────────────────── */
   useEffect(() => {
-    fetch("http://localhost:8000/api/analytics")
+    fetch(`${API_URL}/api/analytics`)
       .then(r => { if (!r.ok) throw new Error(); return r.json(); })
       .then(d => { setAnalytics(d); setDbStatus("LIVE"); })
       .catch(() => {
@@ -107,7 +122,7 @@ export default function App() {
         });
       });
 
-    fetch("http://localhost:8000/api/satellites")
+    fetch(`${API_URL}/api/satellites`)
       .then(r => { if (!r.ok) throw new Error(); return r.json(); })
       .then(d => setSatellites(d))
       .catch(() => setSatellites([
@@ -149,7 +164,7 @@ export default function App() {
     if (now - lastFetchTime.current < 150 && isPlaying) return;
     lastFetchTime.current = now;
 
-    fetch(`http://localhost:8000/api/state?t=${timeOffset}`)
+    fetch(`${API_URL}/api/state?t=${timeOffset}`)
       .then(r => { if (!r.ok) throw new Error(); return r.json(); })
       .then(data => {
         setDebris(data.debris);
@@ -195,7 +210,7 @@ export default function App() {
         });
       });
 
-    fetch(`http://localhost:8000/api/predictions?t=${timeOffset}`)
+    fetch(`${API_URL}/api/predictions?t=${timeOffset}`)
       .then(r => { if (!r.ok) throw new Error(); return r.json(); })
       .then(d => setPredictions(d))
       .catch(() => {
@@ -219,9 +234,11 @@ export default function App() {
   const handleSelectSat = useCallback((sat) => {
     setSelectedSat(sat);
     if (sat) {
+      soundService.playSelect();
       setCameraMode(sat.orbit_type === "DEBRIS" ? "global" : "tracking");
       if (isMobile) setShowMobileRight(true);
     } else {
+      soundService.playClick();
       setCameraMode("global");
       setShowMobileRight(false);
     }
@@ -248,8 +265,9 @@ export default function App() {
 
   /* ── maneuver ──────────────────────────────────────────── */
   const handleExecuteManeuver = (satName) => {
+    soundService.playManeuver();
     setIsManeuvering(true); setThrusterActive(true);
-    fetch(`http://localhost:8000/api/maneuver/execute?satellite_name=${encodeURIComponent(satName)}`, { method:"POST" })
+    fetch(`${API_URL}/api/maneuver/execute?satellite_name=${encodeURIComponent(satName)}`, { method:"POST" })
       .then(r => { if (!r.ok) throw new Error(); return r.json(); })
       .then(data => {
         setIsManeuvering(false);
@@ -302,6 +320,16 @@ export default function App() {
   };
 
   const activeHazard = predictions.find(p => p.satellite===selectedSat?.name && p.recommended_action!=="Maneuver Completed");
+
+  useEffect(() => {
+    if (activeHazard) {
+      soundService.playWarning();
+      const id = setInterval(() => {
+        soundService.playWarning();
+      }, 8000);
+      return () => clearInterval(id);
+    }
+  }, [activeHazard]);
 
   const stats = [
     { label:"Active Satellites",    value: analytics?.satellites_count?.toLocaleString() || "12,542", delta:"▲ 24",  dc:"#10b981" },
@@ -447,14 +475,14 @@ export default function App() {
                 { Icon:Settings,   title:"Console Options" },
               ].map(({ Icon, title }) => (
                 <button key={title} title={title} style={{ background:"none", border:"none", cursor:"pointer", color:"#475569", padding:3, borderRadius:4, transition:"color 0.15s ease", pointerEvents:"auto" }}
-                  onMouseEnter={e => e.currentTarget.style.color="#0ea5e9"}
+                  onMouseEnter={e => { e.currentTarget.style.color="#0ea5e9"; soundService.playHover(); }}
                   onMouseLeave={e => e.currentTarget.style.color="#475569"}>
                   <Icon style={{ width:13, height:13 }} />
                 </button>
               ))}
               <button
                 title="Toggle CRT Screen Scanlines"
-                onClick={() => setScanlineActive(v => !v)}
+                onClick={() => { setScanlineActive(v => !v); soundService.playClick(); }}
                 style={{
                   background: "none",
                   border: "none",
@@ -469,10 +497,32 @@ export default function App() {
                   justifyContent: "center",
                   filter: scanlineActive ? "drop-shadow(0 0 4px rgba(14,165,233,0.6))" : "none"
                 }}
-                onMouseEnter={e => { if (!scanlineActive) e.currentTarget.style.color = "#0ea5e9"; }}
+                onMouseEnter={e => { if (!scanlineActive) e.currentTarget.style.color = "#0ea5e9"; soundService.playHover(); }}
                 onMouseLeave={e => { if (!scanlineActive) e.currentTarget.style.color = "#475569"; }}
               >
                 <Monitor style={{ width: 13, height: 13 }} />
+              </button>
+              <button
+                title={isMuted ? "Unmute Audio FX" : "Mute Audio FX"}
+                onClick={handleToggleMute}
+                style={{
+                  background: "none",
+                  border: "none",
+                  cursor: "pointer",
+                  color: isMuted ? "#475569" : "#0ea5e9",
+                  padding: 3,
+                  borderRadius: 4,
+                  transition: "all 0.15s ease",
+                  pointerEvents: "auto",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  filter: !isMuted ? "drop-shadow(0 0 4px rgba(14,165,233,0.6))" : "none"
+                }}
+                onMouseEnter={e => { if (isMuted) e.currentTarget.style.color = "#0ea5e9"; soundService.playHover(); }}
+                onMouseLeave={e => { if (isMuted) e.currentTarget.style.color = "#475569"; }}
+              >
+                {isMuted ? <VolumeX style={{ width: 13, height: 13 }} /> : <Volume2 style={{ width: 13, height: 13 }} />}
               </button>
             </div>
           </div>
@@ -546,12 +596,15 @@ export default function App() {
           {/* ── LEFT SIDEBAR (desktop/tablet) ── */}
           {!isMobile && (
             <div style={{
-              position:"relative", height:"100%", flexShrink:0, pointerEvents:"auto"
+              position:"relative", height:"100%", minHeight:0, flexShrink:0, display:"flex", flexDirection:"column", pointerEvents:"auto"
             }}>
               <div style={{
                 width: sidebarW,
                 minWidth: sidebarW,
                 height:"100%",
+                minHeight:0,
+                display:"flex",
+                flexDirection:"column",
                 transition:"width 0.25s cubic-bezier(0.4,0,0.2,1), min-width 0.25s cubic-bezier(0.4,0,0.2,1)",
                 overflow:"hidden"
               }}>
@@ -670,13 +723,16 @@ export default function App() {
           {/* ── RIGHT PANEL (desktop/tablet) ── */}
           {!isMobile && (
             <div style={{
-              position:"relative", height:"100%", flexShrink:0, pointerEvents:"auto"
+              position:"relative", height:"100%", minHeight:0, flexShrink:0, display:"flex", flexDirection:"column", pointerEvents:"auto"
             }}>
               <div style={{
                 width: panelW,
                 minWidth: isRightPanelCollapsed ? 0 : (isTablet ? 260 : 300),
                 maxWidth: 380,
                 height:"100%",
+                minHeight:0,
+                display:"flex",
+                flexDirection:"column",
                 transition:"width 0.25s cubic-bezier(0.4,0,0.2,1), min-width 0.25s cubic-bezier(0.4,0,0.2,1)",
                 overflow:"hidden"
               }}>
