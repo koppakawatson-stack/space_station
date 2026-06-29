@@ -174,13 +174,16 @@ function CollisionRing({ probability }) {
 /* ── Empty State ─────────────────────────────────────────── */
 function EmptyState() {
   return (
-    <div className="w-full h-full glass-panel rounded-lg flex flex-col select-none relative overflow-hidden" style={{ fontFamily:"'Rajdhani',sans-serif" }}>
+    <div className="w-full h-full glass-panel-premium rounded-lg flex flex-col select-none relative overflow-hidden" style={{ fontFamily:"'Rajdhani',sans-serif" }}>
       <div className="hud-corners-bottom rounded-lg" />
+
+      {/* Premium top accent */}
+      <div style={{ position:"absolute", top:0, left:"8%", right:"8%", height:"2px", background:"linear-gradient(90deg, transparent, rgba(14,165,233,0.7) 30%, rgba(6,182,212,1.0) 50%, rgba(139,92,246,0.6) 70%, transparent)", borderRadius:"0 0 2px 2px", zIndex:2, pointerEvents:"none" }} />
 
       {/* Panel header */}
       <div style={{ padding:"10px 12px 8px", flexShrink:0 }}>
         <div className="section-header" style={{ fontSize:"9px", marginBottom:0 }}>
-          <Satellite style={{ width:10, height:10, color:"#0ea5e9" }} />
+          <Satellite style={{ width:10, height:10, color:"#38bdf8" }} />
           Selected Object
         </div>
       </div>
@@ -190,7 +193,7 @@ function EmptyState() {
         <div className="empty-state-icon" style={{ marginBottom:16 }}>
           <Globe style={{ width:24, height:24, color:"rgba(14,165,233,0.5)" }} />
         </div>
-        <div style={{ fontSize:"11px", fontWeight:700, color:"#475569", letterSpacing:"0.12em", textTransform:"uppercase", marginBottom:6, fontFamily:"'Rajdhani',sans-serif" }}>
+        <div style={{ fontSize:"11px", fontWeight:700, color:"#64748b", letterSpacing:"0.14em", textTransform:"uppercase", marginBottom:6, fontFamily:"'Rajdhani',sans-serif" }}>
           No Satellite Selected
         </div>
         <div style={{ fontSize:"8.5px", color:"#334155", textAlign:"center", lineHeight:1.6, fontFamily:"'Rajdhani',sans-serif", maxWidth:180 }}>

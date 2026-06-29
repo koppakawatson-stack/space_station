@@ -141,7 +141,9 @@ export default function App() {
       ]));
   }, []);
 
-  /* ── simulation loop ───────────────────────────────────── */
+  /* ── simulation loop ──────────────────────────────── */
+  // timeOffset = seconds added/subtracted from real wall-clock UTC
+  // epochNow   = Date.now()/1000 + timeOffset  → real Unix epoch sent to API
   useEffect(() => {
     let lastTime = performance.now();
     const loop = (time) => {
@@ -156,24 +158,35 @@ export default function App() {
     return () => cancelAnimationFrame(animationFrameId.current);
   }, [isPlaying, speed]);
 
+  // Expose current real epoch to canvas
   useEffect(() => { window.simTimeOffset = timeOffset; }, [timeOffset]);
+  // Helper: real UTC epoch for this simulation moment
+  const getEpoch = () => Math.floor(Date.now() / 1000) + timeOffset;
 
-  /* ── backend sync ──────────────────────────────────────── */
+  /* ── backend sync ──────────────────────────────── */
   useEffect(() => {
     const now = Date.now();
     if (now - lastFetchTime.current < 150 && isPlaying) return;
     lastFetchTime.current = now;
 
-    fetch(`${API_URL}/api/state?t=${timeOffset}`)
+    // Real UTC epoch for SGP4 propagation
+    const epoch = Math.floor(Date.now() / 1000) + timeOffset;
+
+    fetch(`${API_URL}/api/state?t=${epoch}`)
       .then(r => { if (!r.ok) throw new Error(); return r.json(); })
       .then(data => {
-        setDebris(data.debris);
-        setSatellites(prev => prev.map(s => {
-          const st = data.satellites.find(ds => ds.name === s.name);
-          return st ? { ...s, ...st } : s;
-        }));
+        setDebris(data.debris || []);
+        setSatellites(prev => {
+          const newSats = data.satellites || [];
+          if (prev.length === 0) return newSats;
+          return prev.map(s => {
+            const st = newSats.find(ds => ds.name === s.name);
+            return st ? { ...s, ...st } : s;
+          });
+        });
       })
       .catch(() => {
+        // Offline fallback: generate simple mock positions
         const mockDebris = [];
         for (let i = 1; i <= 150; i++) {
           const orbitType = i <= 100 ? "LEO" : (i <= 130 ? "MEO" : "GEO");
@@ -210,21 +223,23 @@ export default function App() {
         });
       });
 
-    fetch(`${API_URL}/api/predictions?t=${timeOffset}`)
+    fetch(`${API_URL}/api/predictions?t=${epoch}`)
       .then(r => { if (!r.ok) throw new Error(); return r.json(); })
       .then(d => setPredictions(d))
       .catch(() => {
-        const t_e = 12060, dt = timeOffset - t_e;
+        // Offline fallback prediction
+        const t_e = Math.floor(Date.now()/1000) + 3*3600;
+        const dt  = epoch - t_e;
         const dist = Math.sqrt(Math.pow(4.32,2) + Math.pow(dt*14.2/3600,2));
         const prob = Math.round(92 / (1 + Math.pow(dt/1000,2)));
         setPredictions([{
-          satellite:"STARLINK-4217", debris:"DEBRIS-10023",
+          satellite:"ISS (ZARYA)", debris:"COSMOS 1408 DEB",
           probability:`${prob}%`,
           risk_level: prob>80?"HIGH":(prob>30?"MEDIUM":"SAFE"),
-          time_to_encounter:`${Math.max(0,Math.floor((t_e-timeOffset)/3600))}h : ${Math.max(0,Math.floor(((t_e-timeOffset)%3600)/60))}m : ${Math.max(0,Math.floor((t_e-timeOffset)%60))}s`,
+          time_to_encounter:`${Math.max(0,Math.floor((t_e-epoch)/3600))}h : ${Math.max(0,Math.floor(((t_e-epoch)%3600)/60))}m : ${Math.max(0,Math.floor((t_e-epoch)%60))}s`,
           closest_approach_km:`${dist.toFixed(2)} km`,
           relative_velocity_kms:"14.2 km/s",
-          recommended_action: timeOffset < t_e ? "Increase orbit by +2.4 km" : "Maneuver Completed",
+          recommended_action: epoch < t_e ? "Increase orbit by +2.4 km" : "Maneuver Completed",
           fuel_required_kg:"0.21 kg", risk_reduction:"92% → 0.4%"
         }]);
       });
@@ -359,8 +374,13 @@ export default function App() {
       {/* Moving scanline bar for CRT screen mode */}
       {scanlineActive && <div className="crt-scanline-bar" />}
 
+      {/* ── AURORA AMBIENT GLOW LAYERS ── */}
+      <div className="aurora-layer-1" style={{ top: "-10%", left: "20%", zIndex: 0 }} />
+      <div className="aurora-layer-2" style={{ bottom: "5%", right: "-5%", zIndex: 0 }} />
+      <div className="aurora-layer-3" style={{ top: "30%", left: "-5%", zIndex: 0 }} />
+
       {/* Cyber grid overlay */}
-      <div className="cyber-grid" style={{ position:"absolute", inset:0, opacity:0.09, pointerEvents:"none", zIndex:0 }} />
+      <div className="cyber-grid" style={{ position:"absolute", inset:0, opacity:1, pointerEvents:"none", zIndex:0 }} />
 
       {/* ── 3D CANVAS (fullscreen behind everything) ── */}
       <div style={{ position:"absolute", inset:0, zIndex:1 }}>
@@ -391,18 +411,20 @@ export default function App() {
       }}>
 
         {/* ── TOP HEADER ── */}
-        <header className="glass-panel" style={{
+        <header className="glass-panel-premium" style={{
           height: isMobile ? 44 : 48,
           borderRadius:8,
           display:"flex", alignItems:"center", justifyContent:"space-between",
           padding: isMobile ? "0 10px" : "0 14px",
           pointerEvents:"auto", flexShrink:0,
-          border:"1px solid rgba(14,165,233,0.18)",
-          boxShadow:"0 0 20px rgba(0,0,0,0.7), inset 0 1px 0 rgba(255,255,255,0.04)",
+          border:"1px solid rgba(14,165,233,0.25)",
+          boxShadow:"0 0 30px rgba(0,0,0,0.8), 0 0 60px rgba(14,165,233,0.05), inset 0 1px 0 rgba(255,255,255,0.06)",
           position:"relative", overflow:"hidden"
         }}>
           {/* Animated top edge line */}
-          <div style={{ position:"absolute", top:0, left:0, right:0, height:"1px", background:"linear-gradient(90deg, transparent 0%, rgba(14,165,233,0.6) 30%, rgba(6,182,212,0.8) 50%, rgba(14,165,233,0.6) 70%, transparent 100%)" }} />
+          <div style={{ position:"absolute", top:0, left:0, right:0, height:"1px", background:"linear-gradient(90deg, transparent 0%, rgba(14,165,233,0.6) 20%, rgba(6,182,212,1.0) 40%, rgba(139,92,246,0.8) 60%, rgba(14,165,233,0.6) 80%, transparent 100%)", animation:"shimmer-line 6s ease-in-out infinite" }} />
+          {/* Bottom edge glow */}
+          <div style={{ position:"absolute", bottom:0, left:0, right:0, height:"1px", background:"linear-gradient(90deg, transparent, rgba(14,165,233,0.2) 50%, transparent)" }} />
 
           {/* Left: Logo + mobile menu */}
           <div style={{ display:"flex", alignItems:"center", gap:8, flexShrink:0 }}>
@@ -418,12 +440,12 @@ export default function App() {
             {!isMobile && (
               <div>
                 <div style={{ fontSize:12, fontWeight:900, letterSpacing:"0.12em", color:"#fff", fontFamily:"'Rajdhani',sans-serif", display:"flex", alignItems:"center", gap:4 }}>
-                  <span>ORBITAL</span>
-                  <span style={{ color:"#0ea5e9", textShadow:"0 0 12px rgba(14,165,233,0.8)" }}>GUARD</span>
-                  <span style={{ fontSize:7, fontWeight:700, padding:"1px 4px", background:"rgba(14,165,233,0.15)", border:"1px solid rgba(14,165,233,0.4)", borderRadius:3, color:"#0ea5e9", fontFamily:"'Share Tech Mono',monospace", letterSpacing:"0.1em" }}>AI</span>
+                  <span style={{ background:"linear-gradient(135deg,#e2e8f0,#cbd5e1)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent" }}>ORBITAL</span>
+                  <span className="logo-glow-text" style={{ background:"linear-gradient(135deg,#38bdf8,#06b6d4,#818cf8)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent" }}>GUARD</span>
+                  <span style={{ fontSize:7, fontWeight:700, padding:"1px 5px", background:"linear-gradient(135deg,rgba(14,165,233,0.25),rgba(139,92,246,0.2))", border:"1px solid rgba(14,165,233,0.5)", borderRadius:3, color:"#38bdf8", fontFamily:"'Share Tech Mono',monospace", letterSpacing:"0.1em", boxShadow:"0 0 8px rgba(14,165,233,0.3)" }}>AI</span>
                 </div>
-                <div style={{ fontSize:7, color:"#475569", letterSpacing:"0.18em", textTransform:"uppercase", fontFamily:"'Rajdhani',sans-serif", fontWeight:500 }}>
-                  Space Operations Command Center
+                <div style={{ fontSize:7, color:"#64748b", letterSpacing:"0.2em", textTransform:"uppercase", fontFamily:"'Rajdhani',sans-serif", fontWeight:600, marginTop:1 }}>
+                  ◈ Space Operations Command Center ◈
                 </div>
               </div>
             )}
@@ -436,21 +458,21 @@ export default function App() {
 
           {/* Center: Stats (hidden on mobile) */}
           {!isMobile && (
-            <div style={{ display:"flex", gap: isTablet ? 18 : 28, alignItems:"center" }}>
+            <div style={{ display:"flex", gap: isTablet ? 10 : 14, alignItems:"center" }}>
               {stats.map((s) => (
-                <div key={s.label} style={{ textAlign:"center" }}>
-                  <div style={{ fontSize:7, color:"#475569", textTransform:"uppercase", letterSpacing:"0.12em", fontFamily:"'Rajdhani',sans-serif", fontWeight:500, marginBottom:2 }}>{s.label}</div>
+                <div key={s.label} className="stat-card" style={{ textAlign:"center" }}>
+                  <div style={{ fontSize:7, color:"#64748b", textTransform:"uppercase", letterSpacing:"0.12em", fontFamily:"'Rajdhani',sans-serif", fontWeight:600, marginBottom:2 }}>{s.label}</div>
                   <div style={{ display:"flex", alignItems:"center", gap:4, justifyContent:"center" }}>
-                    <span style={{ fontSize:13, fontWeight:800, color:"#fff", fontFamily:"'Rajdhani',sans-serif" }}>{s.value}</span>
-                    <span style={{ fontSize:8, fontWeight:700, color:s.dc, fontFamily:"'Share Tech Mono',monospace" }}>{s.delta}</span>
+                    <span style={{ fontSize:14, fontWeight:800, color:"#f1f5f9", fontFamily:"'Rajdhani',sans-serif", letterSpacing:"0.02em" }}>{s.value}</span>
+                    <span style={{ fontSize:8, fontWeight:700, color:s.dc, fontFamily:"'Share Tech Mono',monospace", textShadow:`0 0 6px ${s.dc}` }}>{s.delta}</span>
                   </div>
                 </div>
               ))}
-              <div style={{ textAlign:"center" }}>
-                <div style={{ fontSize:7, color:"#475569", textTransform:"uppercase", letterSpacing:"0.12em", fontFamily:"'Rajdhani',sans-serif", fontWeight:500, marginBottom:2 }}>System Status</div>
+              <div className="stat-card" style={{ textAlign:"center" }}>
+                <div style={{ fontSize:7, color:"#64748b", textTransform:"uppercase", letterSpacing:"0.12em", fontFamily:"'Rajdhani',sans-serif", fontWeight:600, marginBottom:2 }}>System Status</div>
                 <div style={{ display:"flex", alignItems:"center", gap:4 }}>
-                  <Radio style={{ width:10, height:10, color:"#10b981", animation:"pulse-slow 2s ease-in-out infinite" }} />
-                  <span style={{ fontSize:10, fontWeight:700, color:"#10b981", fontFamily:"'Rajdhani',sans-serif", letterSpacing:"0.08em", textShadow:"0 0 8px rgba(16,185,129,0.6)" }}>OPERATIONAL</span>
+                  <div className="status-dot-green" />
+                  <span style={{ fontSize:10, fontWeight:700, color:"#10b981", fontFamily:"'Rajdhani',sans-serif", letterSpacing:"0.08em", textShadow:"0 0 10px rgba(16,185,129,0.7)" }}>OPERATIONAL</span>
                   <span style={{ fontSize:8, color:"#475569", fontFamily:"'Share Tech Mono',monospace" }}>100%</span>
                 </div>
               </div>
@@ -531,17 +553,17 @@ export default function App() {
         {/* ── TELEMETRY TICKER BAR (desktop only) ── */}
         {!isMobile && (
           <div style={{
-            height: 20, flexShrink: 0,
-            background: "rgba(4,8,26,0.75)",
-            border: "1px solid rgba(14,165,233,0.12)",
-            borderRadius: 4,
+            height: 22, flexShrink: 0,
+            background: "linear-gradient(90deg, rgba(4,8,26,0.9) 0%, rgba(6,12,32,0.85) 100%)",
+            border: "1px solid rgba(14,165,233,0.15)",
+            borderRadius: 5,
             display: "flex", alignItems: "center",
             overflow: "hidden",
             pointerEvents: "none",
-            boxShadow: "0 2px 8px rgba(0,0,0,0.5)"
+            boxShadow: "0 2px 12px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.03)"
           }}>
             {/* Left badge */}
-            <div style={{ flexShrink:0, padding:"0 10px", borderRight:"1px solid rgba(14,165,233,0.15)", display:"flex", alignItems:"center", gap:5, height:"100%", background:"rgba(14,165,233,0.06)" }}>
+            <div style={{ flexShrink:0, padding:"0 12px", borderRight:"1px solid rgba(14,165,233,0.2)", display:"flex", alignItems:"center", gap:5, height:"100%", background:"linear-gradient(90deg, rgba(14,165,233,0.1), rgba(14,165,233,0.05))" }}>
               <div style={{ width:4, height:4, borderRadius:"50%", background:"#10b981", boxShadow:"0 0 5px #10b981", animation:"pulse-slow 2s infinite" }} />
               <span style={{ fontSize:7.5, fontWeight:700, color:"#10b981", fontFamily:"'Rajdhani',sans-serif", letterSpacing:"0.12em" }}>LIVE</span>
             </div>
@@ -627,16 +649,10 @@ export default function App() {
                 />
               </div>
               {/* Collapse toggle */}
-              <button onClick={() => setIsSidebarCollapsed(v => !v)} style={{
-                position:"absolute", top:"50%", transform:"translateY(-50%)",
-                right:-15, zIndex:20,
-                width:15, height:48,
-                background:"rgba(4,8,26,0.9)",
-                border:"1px solid rgba(14,165,233,0.3)", borderLeft:"none",
+              <button onClick={() => setIsSidebarCollapsed(v => !v)} className="collapse-btn" style={{
+                right:-15,
+                borderLeft:"none",
                 borderRadius:"0 4px 4px 0",
-                color:"#0ea5e9", cursor:"pointer",
-                display:"flex", alignItems:"center", justifyContent:"center",
-                fontSize:9, fontWeight:700, fontFamily:"'Share Tech Mono',monospace"
               }}>
                 {isSidebarCollapsed ? "»" : "«"}
               </button>
@@ -647,18 +663,20 @@ export default function App() {
           <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"flex-start", pointerEvents:"none", position:"relative", gap: 8 }}>
             {/* Space Launch insertion banner */}
             {launchNotification && (
-              <div style={{
+              <div className="banner-launch" style={{
                 marginTop:10,
-                display:"flex", alignItems:"center", gap:8,
-                padding:"7px 18px",
-                background:"rgba(16,185,129,0.92)",
-                border:"1px solid rgba(16,185,129,0.65)",
-                borderRadius:6,
-                boxShadow:"0 0 20px rgba(16,185,129,0.45)",
+                display:"flex", alignItems:"center", gap:10,
+                padding:"8px 20px",
+                background:"linear-gradient(135deg, rgba(16,185,129,0.95), rgba(5,150,105,0.9))",
+                border:"1px solid rgba(16,185,129,0.7)",
+                borderRadius:8,
+                boxShadow:"0 0 30px rgba(16,185,129,0.5), 0 4px 20px rgba(0,0,0,0.4)",
                 pointerEvents:"auto", cursor:"default"
               }}>
-                <Radio style={{ width:12, height:12, color:"#fff", animation:"pulse-slow 0.8s ease-in-out infinite" }} />
-                <span style={{ fontSize:9, fontWeight:800, color:"#fff", fontFamily:"'Rajdhani',sans-serif", letterSpacing:"0.12em", textTransform:"uppercase" }}>
+                <div style={{ width:20, height:20, borderRadius:"50%", background:"rgba(255,255,255,0.15)", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                  <Radio style={{ width:11, height:11, color:"#fff", animation:"pulse-slow 0.8s ease-in-out infinite" }} />
+                </div>
+                <span style={{ fontSize:9, fontWeight:800, color:"#fff", fontFamily:"'Rajdhani',sans-serif", letterSpacing:"0.14em", textTransform:"uppercase", textShadow:"0 0 12px rgba(255,255,255,0.3)" }}>
                   {launchNotification}
                 </span>
               </div>
@@ -666,19 +684,21 @@ export default function App() {
 
             {/* Collision alarm banner */}
             {activeHazard && (
-              <div style={{
-                marginTop: launchNotification ? 0 : 10,
-                display:"flex", alignItems:"center", gap:8,
-                padding:"7px 18px",
-                background:"rgba(60,4,4,0.92)",
-                border:"1px solid rgba(239,68,68,0.65)",
-                borderRadius:6,
-                boxShadow:"0 0 20px rgba(239,68,68,0.45)",
+              <div className="banner-threat" style={{
+                marginTop: launchNotification ? 6 : 10,
+                display:"flex", alignItems:"center", gap:10,
+                padding:"8px 20px",
+                background:"linear-gradient(135deg, rgba(80,8,8,0.97), rgba(60,4,4,0.94))",
+                border:"1px solid rgba(239,68,68,0.7)",
+                borderRadius:8,
+                boxShadow:"0 0 30px rgba(239,68,68,0.5), 0 4px 20px rgba(0,0,0,0.5)",
                 animation:"threat-pulse 1.5s ease-in-out infinite",
                 pointerEvents:"auto", cursor:"default"
               }}>
-                <AlertTriangle style={{ width:12, height:12, color:"#ef4444", animation:"pulse-slow 0.8s ease-in-out infinite" }} />
-                <span style={{ fontSize:9, fontWeight:800, color:"#ef4444", fontFamily:"'Rajdhani',sans-serif", letterSpacing:"0.12em", textTransform:"uppercase" }}>
+                <div style={{ width:20, height:20, borderRadius:"50%", background:"rgba(239,68,68,0.2)", border:"1px solid rgba(239,68,68,0.5)", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, animation:"pulse-slow 0.8s ease-in-out infinite" }}>
+                  <AlertTriangle style={{ width:11, height:11, color:"#ef4444" }} />
+                </div>
+                <span style={{ fontSize:9, fontWeight:800, color:"#fca5a5", fontFamily:"'Rajdhani',sans-serif", letterSpacing:"0.14em", textTransform:"uppercase", textShadow:"0 0 12px rgba(239,68,68,0.6)" }}>
                   ⚠ Collision Vector Detected — Execute Avoidance Burn Immediately
                 </span>
               </div>
@@ -747,16 +767,10 @@ export default function App() {
                 )}
               </div>
               {/* Collapse toggle */}
-              <button onClick={() => setIsRightPanelCollapsed(v => !v)} style={{
-                position:"absolute", top:"50%", transform:"translateY(-50%)",
-                left:-15, zIndex:20,
-                width:15, height:48,
-                background:"rgba(4,8,26,0.9)",
-                border:"1px solid rgba(14,165,233,0.3)", borderRight:"none",
+              <button onClick={() => setIsRightPanelCollapsed(v => !v)} className="collapse-btn" style={{
+                left:-15,
+                borderRight:"none",
                 borderRadius:"4px 0 0 4px",
-                color:"#0ea5e9", cursor:"pointer",
-                display:"flex", alignItems:"center", justifyContent:"center",
-                fontSize:9, fontWeight:700, fontFamily:"'Share Tech Mono',monospace"
               }}>
                 {isRightPanelCollapsed ? "«" : "»"}
               </button>

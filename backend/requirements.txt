@@ -2,3 +2,21 @@ fastapi>=0.110.0
 uvicorn>=0.28.0
 numpy>=1.26.0
 pydantic>=2.6.0
+
+# SGP4 orbit propagation (Vallado's implementation)
+sgp4>=2.22
+
+# Astronomy / coordinate frames / EOP
+astropy>=6.0
+
+# HTTP client for TLE fetching
+requests>=2.31
+httpx>=0.27
+
+# Machine learning — risk classification
+scikit-learn>=1.4
+xgboost>=2.0
+joblib>=1.3
+
+# Deep learning — LSTM trajectory predictor
+torch>=2.2

@@ -200,7 +200,9 @@ export default function Sidebar({
   /* ── icon-only collapsed sidebar ─────────────────────────── */
   if (isCollapsed) {
     return (
-      <aside className="w-full h-full glass-panel rounded-lg flex flex-col items-center py-2 gap-1 select-none overflow-hidden" style={{ fontFamily:"'Rajdhani',sans-serif" }}>
+      <aside className="w-full h-full glass-panel-premium rounded-lg flex flex-col items-center py-2 gap-1 select-none overflow-hidden relative" style={{ fontFamily:"'Rajdhani',sans-serif" }}>
+        {/* Top accent */}
+        <div style={{ position:"absolute", top:0, left:"10%", right:"10%", height:"2px", background:"linear-gradient(90deg, transparent, rgba(14,165,233,0.7) 50%, transparent)", borderRadius:"0 0 2px 2px" }} />
         {navItems.map(({ id, icon:Icon, badge }) => (
           <button
             key={id}
@@ -211,7 +213,7 @@ export default function Sidebar({
           >
             <Icon style={{ width:15, height:15 }} />
             {badge > 0 && (
-              <span style={{ position:"absolute", top:4, right:4, width:6, height:6, borderRadius:"50%", background:"#ef4444", boxShadow:"0 0 4px #ef4444" }} />
+              <span className="alert-badge-flash" style={{ position:"absolute", top:4, right:4, width:7, height:7, borderRadius:"50%", background:"#ef4444", boxShadow:"0 0 6px #ef4444, 0 0 12px rgba(239,68,68,0.5)" }} />
             )}
           </button>
         ))}
@@ -221,11 +223,14 @@ export default function Sidebar({
 
   /* ── full sidebar ─────────────────────────────────────────── */
   return (
-    <aside className="w-full h-full glass-panel rounded-lg flex flex-col select-none relative overflow-hidden" style={{ fontFamily:"'Rajdhani',sans-serif" }}>
+    <aside className="w-full h-full glass-panel-premium rounded-lg flex flex-col select-none relative overflow-hidden" style={{ fontFamily:"'Rajdhani',sans-serif" }}>
       <div className="hud-corners-bottom rounded-lg" />
 
+      {/* Premium top accent line */}
+      <div style={{ position:"absolute", top:0, left:"8%", right:"8%", height:"2px", background:"linear-gradient(90deg, transparent, rgba(14,165,233,0.7) 30%, rgba(6,182,212,1.0) 50%, rgba(139,92,246,0.6) 70%, transparent)", borderRadius:"0 0 2px 2px", zIndex:2, pointerEvents:"none" }} />
+
       {/* Scanline overlay */}
-      <div className="absolute inset-0 pointer-events-none" style={{ background:"repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(0,0,0,0.04) 3px,rgba(0,0,0,0.04) 4px)" }} />
+      <div className="absolute inset-0 pointer-events-none" style={{ background:"repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(0,0,0,0.035) 3px,rgba(0,0,0,0.035) 4px)" }} />
 
       {/* NAV MENU */}
       <nav className="p-2 space-y-0.5 flex-shrink-0">
@@ -238,10 +243,10 @@ export default function Sidebar({
               onMouseEnter={() => soundService.playHover()}
               className={`nav-btn ${isActive ? "active" : ""}`}
             >
-              <Icon style={{ width:13, height:13, flexShrink:0, color:isActive ? "#0ea5e9" : "#475569" }} />
+              <Icon style={{ width:13, height:13, flexShrink:0, color:isActive ? "#38bdf8" : "#475569" }} />
               <span style={{ flex:1 }}>{label}</span>
               {badge > 0 && (
-                <span style={{ background:"rgba(239,68,68,0.2)", border:"1px solid rgba(239,68,68,0.6)", color:"#ef4444", fontSize:"8px", fontWeight:700, padding:"1px 5px", borderRadius:"10px", animation:"pulse-slow 1.5s ease-in-out infinite" }}>
+                <span className="alert-badge-flash" style={{ background:"rgba(239,68,68,0.15)", border:"1px solid rgba(239,68,68,0.65)", color:"#fca5a5", fontSize:"8px", fontWeight:700, padding:"1px 5px", borderRadius:"10px" }}>
                   {badge}
                 </span>
               )}

@@ -603,31 +603,39 @@ function Earth({ sunDirection }) {
       normal: createFallbackTexture("normal"),
     };
 
-    // Try to load real textures in background and patch the material when ready
+    // Try to load real textures in background — try multiple CDN mirrors
     const loader = new THREE.TextureLoader();
     loader.setCrossOrigin("anonymous");
-    const urls = {
-      day: "https://cdn.jsdelivr.net/gh/mrdoob/three.js@dev/examples/textures/planets/earth_atmos_2048.jpg",
-      night: "https://cdn.jsdelivr.net/gh/mrdoob/three.js@dev/examples/textures/planets/earth_lights_2048.png",
-      clouds: "https://cdn.jsdelivr.net/gh/mrdoob/three.js@dev/examples/textures/planets/earth_clouds_2048.png",
-      specular: "https://cdn.jsdelivr.net/gh/mrdoob/three.js@dev/examples/textures/planets/earth_specular_2048.jpg",
-      normal: "https://cdn.jsdelivr.net/gh/mrdoob/three.js@dev/examples/textures/planets/earth_normal_2048.jpg",
+    const cdnMirrors = [
+      "https://raw.githubusercontent.com/mrdoob/three.js/dev/examples/textures/planets/",
+      "https://cdn.jsdelivr.net/gh/mrdoob/three.js@r155/examples/textures/planets/",
+    ];
+    const fileNames = {
+      day: "earth_atmos_2048.jpg",
+      night: "earth_lights_2048.png",
+      clouds: "earth_clouds_2048.png",
+      specular: "earth_specular_2048.jpg",
+      normal: "earth_normal_2048.jpg",
     };
-    Object.entries(urls).forEach(([key, url]) => {
-      loader.load(
-        url,
-        (tex) => {
-          fallback[key].dispose();
-          fallback[key] = tex;
-          // Patch live shader uniforms if already mounted
-          if (earthMatRef.current && earthMatRef.current.uniforms?.[`${key}Texture`]) {
-            earthMatRef.current.uniforms[`${key}Texture`].value = tex;
-            earthMatRef.current.needsUpdate = true;
-          }
-        },
-        undefined,
-        () => { /* keep fallback */ }
-      );
+    Object.entries(fileNames).forEach(([key, fname]) => {
+      let tried = 0;
+      const tryLoad = (mirrorIdx) => {
+        if (mirrorIdx >= cdnMirrors.length) return;
+        loader.load(
+          cdnMirrors[mirrorIdx] + fname,
+          (tex) => {
+            tex.wrapS = THREE.RepeatWrapping;
+            fallback[key] = tex;
+            if (earthMatRef.current && earthMatRef.current.uniforms?.[`${key}Texture`]) {
+              earthMatRef.current.uniforms[`${key}Texture`].value = tex;
+              earthMatRef.current.needsUpdate = true;
+            }
+          },
+          undefined,
+          () => tryLoad(mirrorIdx + 1)
+        );
+      };
+      tryLoad(0);
     });
 
     return fallback;
@@ -1129,6 +1137,239 @@ function OrbitLine({ satellite, color, isSelected, hasSelection }) {
 }
 
 // ============================================================
+// ORBITAL TRAIL — glowing path behind selected satellite
+// ============================================================
+function OrbitalTrail({ sat }) {
+  const trailRef = useRef();
+  const historyRef = useRef([]);
+  const MAX_TRAIL = 120;
+
+  const a  = sat.a / 1000;
+  const e  = sat.e || 0.0001;
+  const i  = THREE.MathUtils.degToRad(sat.i_deg || 28.5);
+  const elements = useMemo(() => getKeplerianElements(sat.name, 0), [sat.name]);
+  const node     = THREE.MathUtils.degToRad(elements.node);
+  const peri     = THREE.MathUtils.degToRad(elements.peri);
+  const M0       = THREE.MathUtils.degToRad(elements.M0);
+  const period   = useMemo(() => 2 * Math.PI * Math.sqrt(Math.pow(sat.a, 3) / MU), [sat.a]);
+  const meanMotion = useMemo(() => (2 * Math.PI) / period, [period]);
+
+  const positions = useMemo(() => new Float32Array(MAX_TRAIL * 3), []);
+
+  useFrame((state) => {
+    const t = window.simTimeOffset ?? 0;
+    const M = (M0 + meanMotion * t) % (2 * Math.PI);
+    let E = M;
+    for (let j = 0; j < 6; j++) E = E - (E - e * Math.sin(E) - M) / (1.0 - e * Math.cos(E));
+    const xp = a * (Math.cos(E) - e);
+    const yp = a * Math.sqrt(1 - e * e) * Math.sin(E);
+    const cn = Math.cos(node); const sn = Math.sin(node);
+    const cp = Math.cos(peri); const sp = Math.sin(peri);
+    const ci = Math.cos(i);    const si = Math.sin(i);
+    const x = xp * (cp * cn - sp * sn * ci) - yp * (sp * cn + cp * sn * ci);
+    const y = xp * (cp * sn + sp * cn * ci) - yp * (sp * sn - cp * cn * ci);
+    const z = xp * (sp * si) + yp * (cp * si);
+
+    historyRef.current.push(new THREE.Vector3(x, z, y));
+    if (historyRef.current.length > MAX_TRAIL) historyRef.current.shift();
+
+    if (!trailRef.current) return;
+    const arr = trailRef.current.geometry.attributes.position.array;
+    const len = historyRef.current.length;
+    for (let k = 0; k < len; k++) {
+      const pt = historyRef.current[k];
+      arr[k * 3]     = pt.x;
+      arr[k * 3 + 1] = pt.y;
+      arr[k * 3 + 2] = pt.z;
+    }
+    // Zero-pad the rest
+    for (let k = len; k < MAX_TRAIL; k++) {
+      arr[k * 3] = arr[k * 3 + 1] = arr[k * 3 + 2] = 0;
+    }
+    trailRef.current.geometry.attributes.position.needsUpdate = true;
+    trailRef.current.geometry.setDrawRange(0, len);
+  });
+
+  const orbitColor = getOrbitColor(sat.orbit_type);
+
+  return (
+    <points ref={trailRef}>
+      <bufferGeometry>
+        <bufferAttribute attach="attributes-position" args={[positions, 3]} />
+      </bufferGeometry>
+      <pointsMaterial
+        size={0.03}
+        color={orbitColor}
+        transparent
+        opacity={0.55}
+        blending={THREE.AdditiveBlending}
+        depthWrite={false}
+        sizeAttenuation={true}
+      />
+    </points>
+  );
+}
+
+// ============================================================
+// VAN ALLEN RADIATION BELTS
+// ============================================================
+function VanAllenBelts() {
+  const innerRef = useRef();
+  const outerRef = useRef();
+
+  useFrame((state) => {
+    const t = state.clock.getElapsedTime();
+    if (innerRef.current) innerRef.current.rotation.y = t * 0.012;
+    if (outerRef.current) outerRef.current.rotation.y = -t * 0.007;
+  });
+
+  // Inner belt: 1,000–6,000 km altitude → 7.4–12.4 Earth radii from center
+  const innerR1 = EARTH_RADIUS * 1.15;
+  const innerR2 = EARTH_RADIUS * 1.95;
+  // Outer belt: 13,500–58,000 km → 3–9 Earth radii
+  const outerR1 = EARTH_RADIUS * 3.2;
+  const outerR2 = EARTH_RADIUS * 6.5;
+
+  const createTorusPoints = (r1, r2, count, inclinationDeg) => {
+    const positions = new Float32Array(count * 3);
+    const colors    = new Float32Array(count * 3);
+    const incRad = THREE.MathUtils.degToRad(inclinationDeg);
+    for (let idx = 0; idx < count; idx++) {
+      const theta = Math.random() * Math.PI * 2;
+      const phi   = (Math.random() - 0.5) * Math.PI * 0.28; // flatten into disc
+      const r     = r1 + Math.random() * (r2 - r1);
+      const x = r * Math.cos(theta) * Math.cos(phi);
+      const y = r * Math.sin(phi);
+      const z = r * Math.sin(theta) * Math.cos(phi);
+      // Tilt by Earth axial tilt
+      const cy = Math.cos(incRad); const sy = Math.sin(incRad);
+      positions[idx * 3]     = x;
+      positions[idx * 3 + 1] = y * cy - z * sy;
+      positions[idx * 3 + 2] = y * sy + z * cy;
+      // Color: inner = orange/yellow, outer = blue/purple
+      const heat = Math.random();
+      if (r1 < EARTH_RADIUS * 2) {
+        colors[idx * 3] = 1.0; colors[idx * 3 + 1] = 0.5 * heat; colors[idx * 3 + 2] = 0.1;
+      } else {
+        colors[idx * 3] = 0.15; colors[idx * 3 + 1] = 0.3 * heat; colors[idx * 3 + 2] = 1.0;
+      }
+    }
+    return [positions, colors];
+  };
+
+  const [innerPos, innerCol] = useMemo(() => createTorusPoints(innerR1, innerR2, 18000, 11.5), []);
+  const [outerPos, outerCol] = useMemo(() => createTorusPoints(outerR1, outerR2, 22000, 11.5), []);
+
+  return (
+    <group>
+      <points ref={innerRef}>
+        <bufferGeometry>
+          <bufferAttribute attach="attributes-position" args={[innerPos, 3]} />
+          <bufferAttribute attach="attributes-color" args={[innerCol, 3]} />
+        </bufferGeometry>
+        <pointsMaterial
+          size={0.028}
+          vertexColors={true}
+          transparent
+          opacity={0.22}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          sizeAttenuation={true}
+        />
+      </points>
+      <points ref={outerRef}>
+        <bufferGeometry>
+          <bufferAttribute attach="attributes-position" args={[outerPos, 3]} />
+          <bufferAttribute attach="attributes-color" args={[outerCol, 3]} />
+        </bufferGeometry>
+        <pointsMaterial
+          size={0.032}
+          vertexColors={true}
+          transparent
+          opacity={0.16}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          sizeAttenuation={true}
+        />
+      </points>
+    </group>
+  );
+}
+
+// ============================================================
+// THRUSTER PARTICLE SYSTEM — for maneuver burns
+// ============================================================
+function ThrusterParticles({ active, color = "#06b6d4" }) {
+  const particleCount = 60;
+  const posRef = useRef(new Float32Array(particleCount * 3));
+  const velRef = useRef(new Float32Array(particleCount * 3));
+  const lifeRef = useRef(new Float32Array(particleCount).fill(0));
+  const pointsRef = useRef();
+
+  useEffect(() => {
+    // Reset particles when active changes
+    lifeRef.current.fill(0);
+  }, [active]);
+
+  useFrame((state, delta) => {
+    if (!pointsRef.current || !active) {
+      if (pointsRef.current) pointsRef.current.visible = false;
+      return;
+    }
+    pointsRef.current.visible = true;
+
+    const pos = posRef.current;
+    const vel = velRef.current;
+    const life = lifeRef.current;
+
+    for (let k = 0; k < particleCount; k++) {
+      life[k] -= delta;
+      if (life[k] <= 0) {
+        // Respawn
+        const spread = 0.018;
+        pos[k*3]   = (Math.random() - 0.5) * spread;
+        pos[k*3+1] = -0.06;
+        pos[k*3+2] = (Math.random() - 0.5) * spread;
+        vel[k*3]   = (Math.random() - 0.5) * 0.04;
+        vel[k*3+1] = -(0.12 + Math.random() * 0.18);
+        vel[k*3+2] = (Math.random() - 0.5) * 0.04;
+        life[k] = 0.5 + Math.random() * 0.8;
+      } else {
+        pos[k*3]   += vel[k*3]   * delta;
+        pos[k*3+1] += vel[k*3+1] * delta;
+        pos[k*3+2] += vel[k*3+2] * delta;
+        vel[k*3+1] *= 0.92; // drag
+      }
+    }
+
+    if (pointsRef.current.geometry.attributes.position) {
+      pointsRef.current.geometry.attributes.position.array.set(pos);
+      pointsRef.current.geometry.attributes.position.needsUpdate = true;
+    }
+  });
+
+  const positions = useMemo(() => new Float32Array(particleCount * 3), []);
+
+  if (!active) return null;
+  return (
+    <points ref={pointsRef}>
+      <bufferGeometry>
+        <bufferAttribute attach="attributes-position" args={[positions, 3]} />
+      </bufferGeometry>
+      <pointsMaterial
+        size={0.04}
+        color={color}
+        transparent
+        opacity={0.85}
+        blending={THREE.AdditiveBlending}
+        depthWrite={false}
+        sizeAttenuation={true}
+      />
+    </points>
+  );
+}
+
+// ============================================================
 // CLEAN GLOWING SATELLITE MARKER
 // (replaces complex 3D models — with floating HTML labels)
 // ============================================================
@@ -1136,6 +1377,8 @@ function SatelliteMesh({ sat, index, onSelect, isSelected, predictions = [], thr
   const meshRef  = useRef();
   const modelGroupRef = useRef();
   const markerGroupRef = useRef();
+  const pulseRingRef = useRef();
+  const pulseRing2Ref = useRef();
   const [hovered, setHovered] = useState(false);
   const { camera } = useThree();
   const activeHazard = predictions.find(p => p.satellite === sat.name && p.recommended_action !== "Maneuver Completed");
@@ -1150,7 +1393,7 @@ function SatelliteMesh({ sat, index, onSelect, isSelected, predictions = [], thr
   const period     = useMemo(() => 2 * Math.PI * Math.sqrt(Math.pow(sat.a, 3) / MU), [sat.a]);
   const meanMotion = useMemo(() => (2 * Math.PI) / period, [period]);
 
-  useFrame(() => {
+  useFrame((state) => {
     if (!meshRef.current) return;
     const t = window.simTimeOffset ?? 0;
     const M = (M0 + meanMotion * t) % (2 * Math.PI);
@@ -1172,14 +1415,29 @@ function SatelliteMesh({ sat, index, onSelect, isSelected, predictions = [], thr
     const shouldShowModel = isSelected || camDist < 5.0;
     if (modelGroupRef.current) modelGroupRef.current.visible = shouldShowModel;
     if (markerGroupRef.current) markerGroupRef.current.visible = !shouldShowModel;
+
+    // Animate pulsing rings for selected / hazard satellites
+    const elapsed = state.clock.getElapsedTime();
+    if (pulseRingRef.current && isSelected) {
+      const pulse = (Math.sin(elapsed * 2.5) * 0.5 + 0.5);
+      const s = 0.35 + pulse * 0.45;
+      pulseRingRef.current.scale.setScalar(s);
+      pulseRingRef.current.material.opacity = 0.6 - pulse * 0.45;
+    }
+    if (pulseRing2Ref.current && isSelected) {
+      const pulse2 = (Math.sin(elapsed * 2.5 + Math.PI) * 0.5 + 0.5);
+      const s2 = 0.35 + pulse2 * 0.45;
+      pulseRing2Ref.current.scale.setScalar(s2);
+      pulseRing2Ref.current.material.opacity = 0.45 - pulse2 * 0.35;
+    }
   });
 
-  const satColor   = getOrbitColor(sat.orbit_type);
+  const satColor    = getOrbitColor(sat.orbit_type);
   const activeColor = activeHazard ? "#ef4444" : satColor;
   const markerSize  = isSelected ? 0.09 : (hovered ? 0.08 : 0.055);
   const glowSize    = isSelected ? 0.22 : (hovered ? 0.18 : 0.0);
   const glowOpacity = isSelected ? 0.5  : (hovered ? 0.35 : 0.0);
-  const altKm = sat.a ? (sat.a - 6371).toFixed(0) : "—";
+  const altKm  = sat.a ? (sat.a - 6371).toFixed(0) : "—";
   const velKms = sat.a ? Math.sqrt(398600.44 / sat.a).toFixed(2) : "—";
 
   return (
@@ -1197,6 +1455,10 @@ function SatelliteMesh({ sat, index, onSelect, isSelected, predictions = [], thr
       {/* DETAILED 3D MODEL: rendered when close or selected */}
       <group ref={modelGroupRef} visible={false}>
         <SatelliteModel satName={sat.name} color={activeColor} isSelected={isSelected} thrusterActive={thrusterActive} />
+        {/* Improved thruster particle plume */}
+        {isSelected && thrusterActive && (
+          <ThrusterParticles active={true} color={activeColor === "#ef4444" ? "#ef4444" : "#06b6d4"} />
+        )}
       </group>
 
       {/* GLOWING MARKER: rendered when far */}
@@ -1220,6 +1482,14 @@ function SatelliteMesh({ sat, index, onSelect, isSelected, predictions = [], thr
             />
           </mesh>
         )}
+
+        {/* Animated pulsing alert ring (hazard only) */}
+        {activeHazard && (
+          <mesh rotation={[Math.PI / 2, 0, 0]}>
+            <ringGeometry args={[0.12, 0.16, 32]} />
+            <meshBasicMaterial color="#ef4444" side={THREE.DoubleSide} transparent opacity={0.8} blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+          </mesh>
+        )}
       </group>
 
       {/* Hover name label */}
@@ -1240,13 +1510,25 @@ function SatelliteMesh({ sat, index, onSelect, isSelected, predictions = [], thr
         </Html>
       )}
 
-      {/* Selection ring (flat ring around satellite) + pulsing rings */}
+      {/* Selection ring + animated expanding rings */}
       {isSelected && (
         <>
           <mesh rotation={[Math.PI / 2, 0, 0]}>
             <ringGeometry args={[0.28, 0.38, 32]} />
             <meshBasicMaterial color={activeColor} side={THREE.DoubleSide} transparent opacity={0.75} toneMapped={false} depthWrite={false} />
           </mesh>
+
+          {/* Expanding pulse ring 1 */}
+          <mesh ref={pulseRingRef} rotation={[Math.PI / 2, 0, 0]}>
+            <ringGeometry args={[0.35, 0.42, 32]} />
+            <meshBasicMaterial color={activeColor} side={THREE.DoubleSide} transparent opacity={0.5} blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+          </mesh>
+          {/* Expanding pulse ring 2 (offset phase) */}
+          <mesh ref={pulseRing2Ref} rotation={[Math.PI / 2, 0, 0]}>
+            <ringGeometry args={[0.35, 0.42, 32]} />
+            <meshBasicMaterial color={activeColor} side={THREE.DoubleSide} transparent opacity={0.35} blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+          </mesh>
+
           {/* Selected name label */}
           <Html position={[0, 0.55, 0]} center distanceFactor={9}>
             <div style={{
@@ -2381,6 +2663,7 @@ export default function SpaceCanvas({
   showDebris = true,
   showSpaceWeather = false,
   showHeatmap = false,
+  showVanAllen = false,
   showLEO = true,
   showMEO = true,
   showGEO = true,
@@ -2447,7 +2730,12 @@ export default function SpaceCanvas({
 
       <Canvas
         camera={{ position: [0, 0, 26.0], fov: 38, near: 0.1, far: 300 }}
-        gl={{ antialias: true, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.05 }}
+        gl={{
+          antialias: true,
+          toneMapping: THREE.ACESFilmicToneMapping,
+          toneMappingExposure: 1.12,
+          powerPreference: "high-performance",
+        }}
       >
         <color attach="background" args={["#000004"]} />
         {/* Cinematic Dynamic Shading */}
@@ -2510,6 +2798,14 @@ export default function SpaceCanvas({
         {showSpaceWeather && <MagnetosphereFieldLines sunDirection={sunDirection} />}
         {showHeatmap && <HeatmapShells />}
 
+        {/* Van Allen Radiation Belts */}
+        {showVanAllen && <VanAllenBelts />}
+
+        {/* Orbital Trail for selected satellite */}
+        {selectedSat && !selectedSat.orbit_type?.includes("DEBRIS") && (
+          <OrbitalTrail sat={selectedSat} key={selectedSat.name} />
+        )}
+
         {/* Satellites */}
         <ActiveSatellitesGroup
           satellites={satellites}
@@ -2545,22 +2841,22 @@ export default function SpaceCanvas({
           makeDefault
         />
 
-        {/* Post-Processing — tuned for clean cinematic look */}
+        {/* Post-Processing — tuned for cinematic deep space look */}
         <EffectComposer>
           <Bloom
-            luminanceThreshold={0.12}
-            luminanceSmoothing={0.78}
+            luminanceThreshold={0.08}
+            luminanceSmoothing={0.85}
             height={512}
-            intensity={1.2}
+            intensity={1.5}
             blendFunction={BlendFunction.SCREEN}
           />
           <ChromaticAberration
-            offset={[0.00015, 0.00015]}
+            offset={[0.00012, 0.00012]}
             blendFunction={BlendFunction.NORMAL}
           />
           <Vignette
-            darkness={0.6}
-            offset={0.32}
+            darkness={0.65}
+            offset={0.3}
             blendFunction={BlendFunction.NORMAL}
           />
         </EffectComposer>
